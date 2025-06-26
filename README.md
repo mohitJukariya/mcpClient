@@ -1,10 +1,10 @@
 # MCP Client - Arbitrum Analytics
 
-A NestJS-based Model Context Protocol (MCP) client that connects to your Arbitrum MCP server and provides an intelligent chat interface powered by Claude 3.5 Sonnet.
+A NestJS-based Model Context Protocol (MCP) client that connects to your Arbitrum MCP server and provides an intelligent chat interface powered by Hugging Face LLMs.
 
 ## Features
 
-- 🤖 **AI-Powered Chat**: Uses Claude 3.5 Sonnet to understand user queries and decide which tools to use
+- 🤖 **AI-Powered Chat**: Uses Hugging Face LLMs (Mistral-7B-Instruct) to understand user queries and decide which tools to use
 - 🔗 **HTTP Transport**: Connects to your MCP server over HTTP (no stdio needed)
 - 🛠️ **Dynamic Tool Calling**: Automatically discovers and calls available tools from your Arbitrum MCP server
 - 💬 **Session Management**: Maintains conversation context across multiple interactions
@@ -14,14 +14,14 @@ A NestJS-based Model Context Protocol (MCP) client that connects to your Arbitru
 ## Architecture
 
 ```
-Client App → NestJS MCP Client → Claude 3.5 → Tool Selection → Arbitrum MCP Server → Response
+Client App → NestJS MCP Client → Hugging Face LLM → Tool Selection → Arbitrum MCP Server → Response
 ```
 
 1. Client sends a natural language query
-2. MCP Client processes the query using Claude 3.5 Sonnet
-3. Claude determines which tools to use and their parameters
+2. MCP Client processes the query using Hugging Face LLM (Mistral-7B-Instruct)
+3. LLM determines which tools to use and their parameters
 4. MCP Client calls the selected tools on your Arbitrum MCP server via HTTP
-5. Results are processed by Claude to generate a natural language response
+5. Results are processed by the LLM to generate a natural language response
 6. Final response is sent back to the client
 
 ## Setup
@@ -29,7 +29,7 @@ Client App → NestJS MCP Client → Claude 3.5 → Tool Selection → Arbitrum 
 ### Prerequisites
 
 - Node.js 18+ and npm
-- An Anthropic API key
+- A Hugging Face API key (get from [Hugging Face Settings](https://huggingface.co/settings/tokens))
 - Your Arbitrum MCP server running (currently deployed at Railway)
 
 ### Installation
@@ -43,10 +43,17 @@ Client App → NestJS MCP Client → Claude 3.5 → Tool Selection → Arbitrum 
    
    Copy the `.env` file and update the values:
    ```env
-   ANTHROPIC_API_KEY=your_anthropic_api_key_here
+   # Hugging Face Configuration
+   HUGGINGFACE_API_KEY=your_huggingface_api_key_here
+   HUGGINGFACE_MODEL=mistralai/Mistral-7B-Instruct-v0.3
+   
+   # Server Configuration
    PORT=3000
    MCP_SERVER_BASE_URL=https://arbitrummcpserver-production.up.railway.app
    NODE_ENV=development
+   
+   # Legacy (keeping for reference)
+   ANTHROPIC_API_KEY=placeholder
    ```
 
 3. **Build the application:**
@@ -133,9 +140,17 @@ src/
 │   ├── chat.service.ts
 │   └── dto/
 │       └── chat.dto.ts
-└── mcp/                  # MCP client functionality
-    ├── mcp.module.ts
-    └── mcp.service.ts
+├── llm/                  # Hugging Face LLM integration
+│   ├── llm.module.ts
+│   └── llm.service.ts
+├── mcp/                  # MCP client functionality
+│   ├── mcp.module.ts
+│   └── mcp.service.ts
+└── scripts/              # Test and utility scripts
+    ├── test-huggingface.ts
+    ├── test-llm-service.ts
+    ├── test-mcp-server.ts
+    └── find-available-models.ts
 ```
 
 ## Configuration
@@ -144,10 +159,12 @@ src/
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ANTHROPIC_API_KEY` | Your Anthropic API key | Required |
+| `HUGGINGFACE_API_KEY` | Your Hugging Face API key | Required |
+| `HUGGINGFACE_MODEL` | Hugging Face model to use | `mistralai/Mistral-7B-Instruct-v0.3` |
 | `PORT` | Server port | `3000` |
 | `MCP_SERVER_BASE_URL` | Base URL of your Arbitrum MCP server | `https://arbitrummcpserver-production.up.railway.app` |
 | `NODE_ENV` | Environment mode | `development` |
+| `ANTHROPIC_API_KEY` | Legacy Anthropic key (kept for reference) | Optional |
 
 ### MCP Server Integration
 
@@ -163,7 +180,7 @@ The application includes comprehensive error handling:
 
 - **MCP Server Connection**: Retries and meaningful error messages
 - **Tool Execution**: Graceful handling of tool failures
-- **Claude API**: Proper error handling for API calls
+- **Hugging Face API**: Proper error handling for API calls and model availability
 - **Session Management**: Automatic cleanup of old sessions
 
 ## Deployment
@@ -207,6 +224,18 @@ npm run test:watch
 
 # Coverage
 npm run test:cov
+
+# Test Hugging Face integration
+npm run test:hf
+
+# Test LLM service
+npm run test:llm
+
+# Test MCP server connection
+npm run test:mcp
+
+# Find available Hugging Face models
+npm run find:models
 ```
 
 ### Linting and Formatting
@@ -223,14 +252,20 @@ npm run format
 
 ### Common Issues
 
-1. **"ANTHROPIC_API_KEY is not configured"**
-   - Ensure your `.env` file contains a valid Anthropic API key
+1. **"HUGGINGFACE_API_KEY is not configured"**
+   - Ensure your `.env` file contains a valid Hugging Face API key
+   - Get your API key from: https://huggingface.co/settings/tokens
 
-2. **"Failed to initialize MCP client"**
+2. **"Model not available" or "No Inference Provider available"**
+   - The selected model might not be available with your current Hugging Face account
+   - Try a different model or upgrade your Hugging Face account
+   - Check supported models at: https://huggingface.co/docs/api-inference/
+
+3. **"Failed to initialize MCP client"**
    - Check that your MCP server is running and accessible
    - Verify the `MCP_SERVER_BASE_URL` is correct
 
-3. **"Tool execution failed"**
+4. **"Tool execution failed"**
    - Check the MCP server logs for errors
    - Ensure the tool parameters are correct
 
