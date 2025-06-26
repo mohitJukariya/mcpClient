@@ -4,6 +4,7 @@ import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 import { ChatModule } from './chat/chat.module';
 import { McpModule } from './mcp/mcp.module';
+import { EmbeddingsModule } from './embeddings/embeddings.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -18,6 +19,7 @@ import { AppService } from './app.service';
         }),
         ChatModule,
         McpModule,
+        EmbeddingsModule,
     ],
     controllers: [AppController],
     providers: [AppService],

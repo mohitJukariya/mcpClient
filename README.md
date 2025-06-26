@@ -1,28 +1,32 @@
-# MCP Client - Arbitrum Analytics
+# MCP Client - Arbitrum Analytics with Vector Embeddings
 
-A NestJS-based Model Context Protocol (MCP) client that connects to your Arbitrum MCP server and provides an intelligent chat interface powered by Hugging Face LLMs.
+A NestJS-based Model Context Protocol (MCP) client that connects to your Arbitrum MCP server and provides an intelligent chat interface powered by Hugging Face LLMs with vector embeddings for contextual memory.
 
 ## Features
 
 - 🤖 **AI-Powered Chat**: Uses Hugging Face LLMs (Mistral-7B-Instruct) to understand user queries and decide which tools to use
+- 🧠 **Vector Embeddings**: Stores conversation history and retrieves relevant context using Pinecone vector database
+- 📚 **Contextual Memory**: Automatically finds and includes relevant past conversations to improve responses
 - 🔗 **HTTP Transport**: Connects to your MCP server over HTTP (no stdio needed)
 - 🛠️ **Dynamic Tool Calling**: Automatically discovers and calls available tools from your Arbitrum MCP server
 - 💬 **Session Management**: Maintains conversation context across multiple interactions
-- 🌐 **Web Interface**: Includes a simple HTML chat interface for testing
+- 🌐 **REST APIs**: Complete API endpoints for managing embeddings and chat sessions
 - 📊 **Health Monitoring**: Built-in health check endpoint
 
 ## Architecture
 
 ```
-Client App → NestJS MCP Client → Hugging Face LLM → Tool Selection → Arbitrum MCP Server → Response
+Client App → NestJS MCP Client → Context Retrieval (Pinecone) → Hugging Face LLM → Tool Selection → Arbitrum MCP Server → Response + Embedding Storage
 ```
 
 1. Client sends a natural language query
-2. MCP Client processes the query using Hugging Face LLM (Mistral-7B-Instruct)
-3. LLM determines which tools to use and their parameters
-4. MCP Client calls the selected tools on your Arbitrum MCP server via HTTP
-5. Results are processed by the LLM to generate a natural language response
-6. Final response is sent back to the client
+2. MCP Client retrieves relevant context from previous conversations using vector similarity
+3. Enhanced query with context is processed using Hugging Face LLM (Mistral-7B-Instruct)
+4. LLM determines which tools to use and their parameters
+5. MCP Client calls the selected tools on your Arbitrum MCP server via HTTP
+6. Results are processed by the LLM to generate a natural language response
+7. Both user query and assistant response are embedded and stored in Pinecone for future context
+8. Final response is sent back to the client
 
 ## Setup
 
@@ -30,6 +34,7 @@ Client App → NestJS MCP Client → Hugging Face LLM → Tool Selection → Arb
 
 - Node.js 18+ and npm
 - A Hugging Face API key (get from [Hugging Face Settings](https://huggingface.co/settings/tokens))
+- A Pinecone API key (get from [Pinecone Console](https://app.pinecone.io/))
 - Your Arbitrum MCP server running (currently deployed at Railway)
 
 ### Installation
@@ -41,22 +46,35 @@ Client App → NestJS MCP Client → Hugging Face LLM → Tool Selection → Arb
 
 2. **Configure environment variables:**
    
-   Copy the `.env` file and update the values:
+   Copy the `.env.example` file to `.env` and update the values:
    ```env
    # Hugging Face Configuration
    HUGGINGFACE_API_KEY=your_huggingface_api_key_here
    HUGGINGFACE_MODEL=mistralai/Mistral-7B-Instruct-v0.3
    
+   # Pinecone Vector Database
+   PINECONE_API_KEY=your_pinecone_api_key_here
+   PINECONE_INDEX_NAME=mcp-chat-embeddings
+   PINECONE_ENVIRONMENT=us-east-1-aws
+   
+   # Embedding Model Configuration
+   EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+   EMBEDDING_DIMENSION=384
+   
    # Server Configuration
    PORT=3000
    MCP_SERVER_BASE_URL=https://arbitrummcpserver-production.up.railway.app
    NODE_ENV=development
-   
-   # Legacy (keeping for reference)
-   ANTHROPIC_API_KEY=placeholder
    ```
 
-3. **Build the application:**
+3. **Set up Pinecone Index:**
+   
+   Create a Pinecone index with:
+   - **Dimension**: 384 (for sentence-transformers/all-MiniLM-L6-v2)
+   - **Metric**: cosine
+   - **Name**: mcp-chat-embeddings (or whatever you set in PINECONE_INDEX_NAME)
+
+4. **Build the application:**
    ```bash
    npm run build
    ```
@@ -79,25 +97,18 @@ npm run start:prod
 
 ### Available Endpoints
 
+#### Core Endpoints
 - **Health Check**: `GET /api/health`
 - **Chat**: `POST /api/chat`
-- **Web Interface**: `GET /` (serves the HTML chat interface)
 
-### API Usage
-
-#### Chat Endpoint
-
-**POST** `/api/chat`
-
-**Request:**
-```json
-{
-  "message": "What's the current TVL on Arbitrum?",
-  "sessionId": "optional-session-id"
-}
-```
-
-**Response:**
+#### Embeddings Management
+- **Store Embedding**: `POST /api/embeddings/store`
+- **Search Similar**: `POST /api/embeddings/search`
+- **Get Context**: `GET /api/embeddings/context/:query`
+- **Session History**: `GET /api/embeddings/history/:sessionId`
+- **Delete Session**: `DELETE /api/embeddings/session/:sessionId`
+- **Index Stats**: `GET /api/embeddings/stats`
+- **Health Check**: `GET /api/embeddings/health`
 ```json
 {
   "response": "The current Total Value Locked (TVL) on Arbitrum is approximately $2.1 billion according to the latest data...",
