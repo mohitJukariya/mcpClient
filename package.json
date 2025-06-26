@@ -21,6 +21,7 @@
     "test:mcp": "ts-node scripts/test-mcp-server.ts",
     "test:hf": "ts-node scripts/test-huggingface.ts",
     "test:llm": "ts-node scripts/test-llm-service.ts",
+    "test:arbitrum": "ts-node scripts/test-arbitrum-tools.ts",
     "find:models": "ts-node scripts/find-available-models.ts"
   },
   "dependencies": {
