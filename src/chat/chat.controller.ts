@@ -10,12 +10,13 @@ export class ChatController {
 
     @Post()
     async chat(@Body() chatRequest: ChatRequestDto): Promise<ChatResponseDto> {
-        this.logger.log(`Received chat request: ${chatRequest.message}`);
+        this.logger.log(`Received chat request: ${chatRequest.message}${chatRequest.userId ? ` (User: ${chatRequest.userId})` : ''}`);
 
         try {
             const response = await this.chatService.processMessage(
                 chatRequest.message,
                 chatRequest.sessionId,
+                chatRequest.userId,
             );
 
             this.logger.log('Chat response generated successfully');

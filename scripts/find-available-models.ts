@@ -1,4 +1,4 @@
-import { HfInference } from '@huggingface/inference';
+import { InferenceClient } from '@huggingface/inference';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -26,7 +26,7 @@ async function findAvailableModels() {
         return;
     }
 
-    const hf = new HfInference(HUGGINGFACE_API_KEY);
+    const hf = new InferenceClient(HUGGINGFACE_API_KEY);
     const availableModels = [];
 
     for (const model of MODELS_TO_TEST) {

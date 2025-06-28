@@ -3,6 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { McpService, McpTool } from '../mcp/mcp.service';
 import { LlmService, LLMMessage } from '../llm/llm.service';
 import { EmbeddingsService } from '../embeddings/embeddings.service';
+import { FailsafeQAService } from '../failsafe/failsafe-qa.service';
+import { ContextStorageService } from '../context/context-storage.service';
+import { ContextUserService } from '../context/context-user.service';
 import { ChatResponseDto } from './dto/chat.dto';
 
 interface ChatSession {
@@ -23,6 +26,9 @@ export class ChatService implements OnModuleInit {
         private readonly mcpService: McpService,
         private readonly llmService: LlmService,
         private readonly embeddingsService: EmbeddingsService,
+        private readonly failsafeService: FailsafeQAService,
+        private readonly contextStorage: ContextStorageService,
+        private readonly contextUserService: ContextUserService,
     ) { }
 
     async onModuleInit() {
@@ -31,7 +37,7 @@ export class ChatService implements OnModuleInit {
         this.logger.log('ChatService initialized with MCP connection and Hugging Face LLM');
     }
 
-    async processMessage(message: string, sessionId?: string): Promise<ChatResponseDto> {
+    async processMessage(message: string, sessionId?: string, userId?: string): Promise<ChatResponseDto> {
         try {
             // Generate session ID if not provided
             const actualSessionId = sessionId || this.generateSessionId();
@@ -53,18 +59,42 @@ export class ChatService implements OnModuleInit {
                 this.logger.warn(`Failed to store user message embedding: ${embeddingError.message}`);
             }
 
+            // Store user context if userId provided
+            if (userId) {
+                try {
+                    const user = await this.contextUserService.getUserById(userId);
+                    if (user) {
+                        const contextEntry = {
+                            id: `ctx-${userId}-${Date.now()}`,
+                            userId,
+                            type: 'query' as const,
+                            content: message,
+                            metadata: {
+                                timestamp: new Date().toISOString(),
+                                toolsUsed: [],
+                                confidence: 0.9,
+                                relatedEntries: []
+                            }
+                        };
+                        await this.contextStorage.storeUserContext(user, contextEntry);
+                    }
+                } catch (contextError) {
+                    this.logger.warn(`Failed to store user context: ${contextError.message}`);
+                }
+            }
+
             // Fetch relevant context from previous conversations
             let contextMessages: string[] = [];
             try {
                 const similarMessages = await this.embeddingsService.searchSimilarMessages(
                     message,
-                    undefined, // Search across all sessions for better context
+                    userId || undefined, // Search user-specific context if userId provided
                     5, // Top 5 most similar messages
                     0.75 // Minimum similarity score
                 );
 
                 if (similarMessages.length > 0) {
-                    contextMessages = similarMessages.map(msg => 
+                    contextMessages = similarMessages.map(msg =>
                         `[${msg.messageType.toUpperCase()}]: ${msg.content}`
                     );
                     this.logger.debug(`Found ${similarMessages.length} relevant context messages`);
@@ -94,7 +124,7 @@ export class ChatService implements OnModuleInit {
             if (contextMessages.length > 0) {
                 // Insert context before the latest user message
                 const contextPrompt = `Based on previous relevant conversations:\n${contextMessages.join('\n')}\n\nNow addressing the current query:`;
-                
+
                 messagesForLLM = [
                     ...session.messages.slice(0, -1), // All messages except the last user message
                     {
@@ -111,6 +141,8 @@ export class ChatService implements OnModuleInit {
                 tools,
             );
 
+            console.log("initial response", llmResponse);
+
             const toolsUsed: Array<{ name: string; arguments: any; result: any }> = [];
             let finalResponse = llmResponse.content;
 
@@ -121,6 +153,8 @@ export class ChatService implements OnModuleInit {
                         this.logger.log(`Calling tool: ${toolCall.name}`, toolCall.arguments);
 
                         const toolResult = await this.mcpService.callTool(toolCall.name, toolCall.arguments);
+
+                        console.log("tool result", toolResult);
 
                         toolsUsed.push({
                             name: toolCall.name,
@@ -133,16 +167,17 @@ export class ChatService implements OnModuleInit {
                             ...session.messages,
                             {
                                 role: 'assistant',
-                                content: `I'll use the ${toolCall.name} tool to get that information for you.`
+                                content: `I'll get that information using ${toolCall.name}.`
                             },
                             {
                                 role: 'user',
-                                content: `Here's the result from ${toolCall.name}: ${JSON.stringify(toolResult)}. Please provide a helpful analysis of this data.`
+                                content: `Tool result: ${JSON.stringify(toolResult)}. Give me only a clean, direct answer in under 30 words. Be concise.`
                             },
                         ];
 
                         const followUpResponse = await this.llmService.generateResponse(followUpMessages, []);
-                        finalResponse = followUpResponse.content;
+                        finalResponse = this.convertHexToDecimal(followUpResponse.content);
+                        console.log("final follow up response after tool call", finalResponse);
 
                     } catch (toolError) {
                         this.logger.error(`Tool execution failed for ${toolCall.name}:`, toolError.message);
@@ -160,7 +195,7 @@ export class ChatService implements OnModuleInit {
             // Store embedding for assistant message
             const assistantMessageIndex = session.messageCount + 1;
             const toolsUsedNames = toolsUsed.map(tool => tool.name);
-            
+
             try {
                 await this.embeddingsService.storeMessageEmbedding(
                     actualSessionId,
@@ -183,6 +218,13 @@ export class ChatService implements OnModuleInit {
                 session.messages = session.messages.slice(-10);
             }
 
+            // Cache successful response for failsafe
+            try {
+                await this.failsafeService.cacheSuccessfulResponse(message, finalResponse);
+            } catch (cacheError) {
+                this.logger.warn(`Failed to cache response: ${cacheError.message}`);
+            }
+
             return {
                 response: finalResponse || 'I apologize, but I couldn\'t generate a response.',
                 sessionId: actualSessionId,
@@ -191,6 +233,29 @@ export class ChatService implements OnModuleInit {
 
         } catch (error) {
             this.logger.error('Error processing message:', error);
+
+            // Use failsafe system
+            try {
+                const failsafeResponse = await this.failsafeService.handleFailure(message, error, sessionId);
+
+                if (failsafeResponse.success) {
+                    this.logger.log(`Using failsafe response (${failsafeResponse.fallbackLevel}): ${failsafeResponse.response.substring(0, 100)}...`);
+
+                    return {
+                        response: failsafeResponse.response,
+                        sessionId: sessionId || this.generateSessionId(),
+                        toolsUsed: undefined,
+                        metadata: {
+                            fallback: true,
+                            fallbackLevel: failsafeResponse.fallbackLevel,
+                            confidence: failsafeResponse.confidence
+                        }
+                    };
+                }
+            } catch (failsafeError) {
+                this.logger.error('Failsafe system also failed:', failsafeError);
+            }
+
             throw new HttpException(
                 `Failed to process message: ${error.message}`,
                 HttpStatus.INTERNAL_SERVER_ERROR,
@@ -231,5 +296,24 @@ export class ChatService implements OnModuleInit {
                 this.logger.log(`Cleaned up expired session: ${sessionId}`);
             }
         }
+    }
+
+    private convertHexToDecimal(content: string): string {
+        // Convert hex values to decimal, but preserve identifiers (hashes, addresses)
+        return content.replace(/0x([0-9a-fA-F]+)/g, (match, hex) => {
+            // Preserve transaction hashes (64 chars), block hashes (64 chars), addresses (40 chars)
+            if (hex.length === 64 || hex.length === 40) {
+                return match; // Keep as hex
+            }
+
+            // Convert shorter hex values (likely numbers) to decimal
+            if (hex.length <= 16) { // Up to 16 hex chars = reasonable number range
+                const decimal = parseInt(hex, 16);
+                return decimal.toString();
+            }
+
+            // For very long hex values that aren't standard hashes/addresses, keep as hex
+            return match;
+        });
     }
 }

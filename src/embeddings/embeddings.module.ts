@@ -10,7 +10,7 @@ import { EmbeddingsController } from './embeddings.controller';
   exports: [EmbeddingsService],
 })
 export class EmbeddingsModule implements OnModuleInit {
-  constructor(private embeddingsService: EmbeddingsService) {}
+  constructor(private embeddingsService: EmbeddingsService) { }
 
   async onModuleInit() {
     try {

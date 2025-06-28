@@ -1,4 +1,4 @@
-import { HfInference } from '@huggingface/inference';
+import { InferenceClient } from '@huggingface/inference';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -19,7 +19,7 @@ async function testHuggingFace() {
     }
 
     try {
-        const hf = new HfInference(HUGGINGFACE_API_KEY);
+        const hf = new InferenceClient(HUGGINGFACE_API_KEY);
 
         console.log('\n1️⃣ Testing chat completion (for instruct models like Mistral)...');
 

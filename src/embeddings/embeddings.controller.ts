@@ -1,13 +1,13 @@
-import { 
-  Controller, 
-  Post, 
-  Get, 
-  Delete, 
-  Body, 
-  Param, 
-  Query, 
-  HttpException, 
-  HttpStatus 
+import {
+  Controller,
+  Post,
+  Get,
+  Delete,
+  Body,
+  Param,
+  Query,
+  HttpException,
+  HttpStatus
 } from '@nestjs/common';
 import { EmbeddingsService } from './embeddings.service';
 
@@ -28,16 +28,16 @@ export class SearchSimilarDto {
 
 @Controller('embeddings')
 export class EmbeddingsController {
-  constructor(private embeddingsService: EmbeddingsService) {}
+  constructor(private embeddingsService: EmbeddingsService) { }
 
   @Post('store')
   async storeEmbedding(@Body() dto: StoreEmbeddingDto) {
     try {
       if (!this.embeddingsService.isEnabled()) {
-        return { 
-          success: false, 
+        return {
+          success: false,
           message: 'Embeddings service is disabled (missing PINECONE_API_KEY)',
-          embeddingId: null 
+          embeddingId: null
         };
       }
 
@@ -66,10 +66,10 @@ export class EmbeddingsController {
   async searchSimilar(@Body() dto: SearchSimilarDto) {
     try {
       if (!this.embeddingsService.isEnabled()) {
-        return { 
-          success: false, 
+        return {
+          success: false,
           message: 'Embeddings service is disabled',
-          results: [] 
+          results: []
         };
       }
 
@@ -102,10 +102,10 @@ export class EmbeddingsController {
   ) {
     try {
       if (!this.embeddingsService.isEnabled()) {
-        return { 
-          success: false, 
+        return {
+          success: false,
           context: '',
-          message: 'Embeddings service is disabled' 
+          message: 'Embeddings service is disabled'
         };
       }
 
@@ -145,10 +145,10 @@ export class EmbeddingsController {
   ) {
     try {
       if (!this.embeddingsService.isEnabled()) {
-        return { 
-          success: false, 
+        return {
+          success: false,
           history: [],
-          message: 'Embeddings service is disabled' 
+          message: 'Embeddings service is disabled'
         };
       }
 
@@ -176,9 +176,9 @@ export class EmbeddingsController {
   async deleteSessionEmbeddings(@Param('sessionId') sessionId: string) {
     try {
       if (!this.embeddingsService.isEnabled()) {
-        return { 
-          success: false, 
-          message: 'Embeddings service is disabled' 
+        return {
+          success: false,
+          message: 'Embeddings service is disabled'
         };
       }
 
@@ -201,8 +201,8 @@ export class EmbeddingsController {
   async getIndexStats() {
     try {
       if (!this.embeddingsService.isEnabled()) {
-        return { 
-          success: false, 
+        return {
+          success: false,
           message: 'Embeddings service is disabled',
           stats: { disabled: true }
         };
@@ -227,10 +227,10 @@ export class EmbeddingsController {
   async generateEmbedding(@Body() body: { text: string }) {
     try {
       if (!this.embeddingsService.isEnabled()) {
-        return { 
-          success: false, 
+        return {
+          success: false,
           message: 'Embeddings service is disabled',
-          embedding: null 
+          embedding: null
         };
       }
 
@@ -253,7 +253,7 @@ export class EmbeddingsController {
   @Get('health')
   async healthCheck() {
     const isEnabled = this.embeddingsService.isEnabled();
-    
+
     return {
       enabled: isEnabled,
       model: process.env.EMBEDDING_MODEL || 'sentence-transformers/all-MiniLM-L6-v2',

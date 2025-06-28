@@ -32,7 +32,7 @@ async function testEmbeddingsIntegration() {
     // Test 1: First message (no context should be found)
     console.log('\n1️⃣ Testing first message (no context expected)');
     console.log('-'.repeat(40));
-    
+
     const firstMessage: ChatRequest = {
       message: "What is the current ETH balance of address 0x722E8BdD2ce80A4422E880164f2079488e115365?",
       sessionId
@@ -53,7 +53,7 @@ async function testEmbeddingsIntegration() {
     // Test 2: Related message (should find context from first message)
     console.log('\n2️⃣ Testing related message (context expected)');
     console.log('-'.repeat(40));
-    
+
     const secondMessage: ChatRequest = {
       message: "Can you also check the token balance for that same address?",
       sessionId
@@ -85,7 +85,7 @@ async function testEmbeddingsIntegration() {
       query: "ETH balance check",
       topK: 3
     };
-    
+
     const searchResponse = await axios.post(`${BASE_URL}/api/embeddings/search`, searchRequest, {
       headers: { 'Content-Type': 'application/json' }
     });

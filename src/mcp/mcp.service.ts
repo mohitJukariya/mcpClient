@@ -104,16 +104,22 @@ export class McpService {
                 },
             };
 
-            this.logger.log(`Calling tool: ${name} with args:`, args);
+            this.logger.log(`Calling tool: ${name} with args:`, JSON.stringify(args));
             const response = await this.httpClient.post<McpResponse>('/mcp', request);
 
             if (response.data.error) {
+                this.logger.error(`MCP Tool Error for ${name}:`, response.data.error);
                 throw new Error(`MCP Tool Error: ${response.data.error.message}`);
             }
 
+            this.logger.log(`Tool ${name} successful, result:`, JSON.stringify(response.data.result).substring(0, 200));
             return response.data.result;
         } catch (error) {
             this.logger.error(`Failed to call tool ${name}:`, error.message);
+            if (error.response) {
+                this.logger.error(`HTTP Status: ${error.response.status}`);
+                this.logger.error(`Response data:`, error.response.data);
+            }
             throw error;
         }
     }

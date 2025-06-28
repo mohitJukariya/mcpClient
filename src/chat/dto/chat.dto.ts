@@ -8,6 +8,10 @@ export class ChatRequestDto {
     @IsString()
     @IsOptional()
     sessionId?: string;
+
+    @IsString()
+    @IsOptional()
+    userId?: string;
 }
 
 export class ChatResponseDto {
@@ -18,4 +22,11 @@ export class ChatResponseDto {
         arguments: any;
         result: any;
     }>;
+    metadata?: {
+        fallback?: boolean;
+        fallbackLevel?: 'none' | 'cached' | 'template' | 'emergency';
+        confidence?: number;
+        contextUsed?: boolean;
+        contextCount?: number;
+    };
 }

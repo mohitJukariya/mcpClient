@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Pinecone } from '@pinecone-database/pinecone';
-import { HfInference } from '@huggingface/inference';
+import { InferenceClient } from '@huggingface/inference';
 import { v4 as uuidv4 } from 'uuid';
 
 export interface EmbeddingRecord {
@@ -32,7 +32,7 @@ export interface ContextResult {
 export class EmbeddingsService {
   private readonly logger = new Logger(EmbeddingsService.name);
   private pinecone: Pinecone;
-  private hf: HfInference;
+  private hf: InferenceClient;
   private indexName: string;
   private embeddingModel: string;
   private embeddingDimension: number;
@@ -55,7 +55,7 @@ export class EmbeddingsService {
       throw new Error('HUGGINGFACE_API_KEY is required for embeddings');
     }
 
-    this.hf = new HfInference(hfApiKey);
+    this.hf = new InferenceClient(hfApiKey);
     this.indexName = this.configService.get<string>('PINECONE_INDEX_NAME') || 'arbitrum-chat-embeddings';
     this.embeddingModel = this.configService.get<string>('EMBEDDING_MODEL') || 'sentence-transformers/all-MiniLM-L6-v2';
     this.embeddingDimension = parseInt(this.configService.get<string>('EMBEDDING_DIMENSION') || '384');
@@ -86,7 +86,7 @@ export class EmbeddingsService {
             }
           }
         });
-        
+
         // Wait for index to be ready
         await this.waitForIndexReady();
       }
@@ -127,10 +127,10 @@ export class EmbeddingsService {
 
     try {
       this.logger.debug(`Generating embedding for text (${text.length} chars)`);
-      
+
       // Clean and truncate text if too long
       const cleanText = text.trim().substring(0, 8000); // Most embedding models have token limits
-      
+
       const response = await this.hf.featureExtraction({
         model: this.embeddingModel,
         inputs: cleanText
@@ -147,7 +147,7 @@ export class EmbeddingsService {
       } else {
         throw new Error('Unexpected embedding response format');
       }
-      
+
       if (!Array.isArray(embedding) || embedding.length === 0) {
         throw new Error('Invalid embedding response');
       }
@@ -260,7 +260,7 @@ export class EmbeddingsService {
   }
 
   async getSessionHistory(
-    sessionId: string, 
+    sessionId: string,
     limit: number = 10
   ): Promise<Array<{
     content: string;
@@ -276,7 +276,7 @@ export class EmbeddingsService {
 
     try {
       const index = this.pinecone.index(this.indexName);
-      
+
       // Query with session filter to get all session messages
       const queryResponse = await index.query({
         vector: new Array(this.embeddingDimension).fill(0), // Dummy vector
@@ -311,7 +311,7 @@ export class EmbeddingsService {
 
     try {
       const index = this.pinecone.index(this.indexName);
-      
+
       // First, get all vectors for this session
       const queryResponse = await index.query({
         vector: new Array(this.embeddingDimension).fill(0),
@@ -322,7 +322,7 @@ export class EmbeddingsService {
 
       if (queryResponse.matches && queryResponse.matches.length > 0) {
         const idsToDelete = queryResponse.matches.map(match => match.id).filter(id => id) as string[];
-        
+
         if (idsToDelete.length > 0) {
           await index.deleteMany(idsToDelete);
           this.logger.log(`Deleted ${idsToDelete.length} embeddings for session ${sessionId}`);
@@ -365,11 +365,11 @@ export class EmbeddingsService {
 
     for (const message of similarMessages) {
       const messageContext = `[${message.messageType}]: ${message.content}\n`;
-      
+
       if (currentLength + messageContext.length > maxContextLength) {
         break;
       }
-      
+
       context += messageContext;
       currentLength += messageContext.length;
     }

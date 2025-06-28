@@ -5,6 +5,9 @@ import { join } from 'path';
 import { ChatModule } from './chat/chat.module';
 import { McpModule } from './mcp/mcp.module';
 import { EmbeddingsModule } from './embeddings/embeddings.module';
+import { ContextModule } from './context/context.module';
+import { AnalyticsModule } from './analytics/analytics.module';
+import { FailsafeModule } from './failsafe/failsafe.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -20,6 +23,9 @@ import { AppService } from './app.service';
         ChatModule,
         McpModule,
         EmbeddingsModule,
+        ContextModule,
+        AnalyticsModule,
+        FailsafeModule,
     ],
     controllers: [AppController],
     providers: [AppService],
