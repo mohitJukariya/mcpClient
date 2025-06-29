@@ -141,17 +141,49 @@ export class LlmService {
             prompt += '9. getGasPrice - Get current gas price (No parameters)\n';
             prompt += '10. getEthSupply - Get total ETH supply (No parameters)\n';
             prompt += '11. validateAddress - Validate address format (Required: address)\n';
+            prompt += '12. getMultiBalance - Get ETH balances for multiple addresses (Required: addresses array)\n';
+            prompt += '13. getERC20Transfers - Get ERC-20 token transfers (Required: address, Optional: contractAddress, startBlock, endBlock, page, offset)\n';
+            prompt += '14. getERC721Transfers - Get ERC-721 NFT transfers (Required: address, Optional: contractAddress, startBlock, endBlock, page, offset)\n';
+            prompt += '15. getInternalTransactions - Get internal transactions (Optional: address OR txHash, startBlock, endBlock, page, offset)\n';
+            prompt += '16. getContractSource - Get verified contract source code (Required: address)\n';
+            prompt += '17. getTokenInfo - Get detailed token information (Required: contractAddress)\n';
+            prompt += '18. getGasOracle - Get gas price recommendations (No parameters)\n';
+            prompt += '19. getTransactionStatus - Get transaction status and receipt (Required: txHash)\n';
+            prompt += '20. getContractCreation - Get contract creation details (Required: contractAddresses array)\n';
+            prompt += '21. getAddressType - Check if address is contract or EOA (Required: address)\n';
 
             prompt += '\nDECISION PROCESS:\n';
             prompt += 'Step 1: Read the user query carefully\n';
-            prompt += 'Step 2: Check if query contains specific data (address, hash, block number)\n';
-            prompt += 'Step 3: If specific data provided, find matching tool from list above\n';
+            prompt += 'Step 2: Identify the type of data requested:\n';
+            prompt += '  • Single address balance → getBalance\n';
+            prompt += '  • Multiple addresses balance (2 or more addresses) → getMultiBalance\n';
+            prompt += '  • Token transfers/history → getERC20Transfers\n';
+            prompt += '  • NFT transfers → getERC721Transfers\n';
+            prompt += '  • Internal transactions → getInternalTransactions\n';
+            prompt += '  • Contract verification/source → getContractSource\n';
+            prompt += '  • Token details/info (what token is X?) → getTokenInfo\n';
+            prompt += '  • Gas prices/recommendations → getGasOracle or getGasPrice\n';
+            prompt += '  • Transaction status → getTransactionStatus\n';
+            prompt += '  • Contract creation → getContractCreation\n';
+            prompt += '  • Address type (contract/wallet) → getAddressType\n';
+            prompt += 'Step 3: If specific data provided, use the matching tool\n';
             prompt += 'Step 4: If no specific data, answer as general knowledge\n';
+
+            prompt += '\nCRITICAL TOOL SELECTION RULES:\n';
+            prompt += '• MULTIPLE ADDRESSES: If query contains 2+ addresses, ALWAYS use getMultiBalance\n';
+            prompt += '• TOKEN IDENTIFICATION: If asked "what token is [address]?", ALWAYS use getTokenInfo\n';
+            prompt += '• PREFER TOOLS: Always use tools when addresses/hashes provided, never answer from knowledge\n';
+            prompt += '• ADDRESS COUNT: Count addresses in query - if 2+, use getMultiBalance not getBalance\n';
+            prompt += '• PATTERN DETECTION: Look for phrases like "balances for", "ETH balances", "check balances"\n';
+            prompt += '• TOKEN QUESTIONS: "What token", "token details", "token info" with address → getTokenInfo\n';
 
             prompt += '\nTOOL USAGE RULES:\n';
             prompt += '• Use tools ONLY when user provides specific data to retrieve\n';
             prompt += '• Format: TOOL_CALL:toolname:{"parameter":"value"}\n';
             prompt += '• For general questions, provide educational answers without tools\n';
+            prompt += '• MANDATORY: If query contains contract addresses, ALWAYS use getTokenInfo\n';
+            prompt += '• MANDATORY: If query contains 2+ addresses for balances, ALWAYS use getMultiBalance\n';
+            prompt += '• NEVER answer from knowledge when specific addresses/hashes are provided\n';
 
             prompt += '\nBALANCE INTERPRETATION RULES:\n';
             prompt += '• getBalance returns the actual ETH balance already converted\n';
@@ -173,6 +205,22 @@ export class LlmService {
             prompt += 'Query: "ETH balance of 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"\n';
             prompt += 'Response: TOOL_CALL:getBalance:{"address":"0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"}\n';
             prompt += 'After tool result: "The balance is [balance value] ETH."\n';
+            prompt += '\nQuery: "Check ETH balances for 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890 and 0xDb16dE5985a83e6b2B13b63dA73cC59FEf4Ec05a"\n';
+            prompt += 'Response: TOOL_CALL:getMultiBalance:{"addresses":["0x742d35Cc6634C0532925a3b8D0A81C3e02e40890","0xDb16dE5985a83e6b2B13b63dA73cC59FEf4Ec05a"]}\n';
+            prompt += '\nQuery: "What are the balances for these addresses: 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890, 0xDb16dE5985a83e6b2B13b63dA73cC59FEf4Ec05a"\n';
+            prompt += 'Response: TOOL_CALL:getMultiBalance:{"addresses":["0x742d35Cc6634C0532925a3b8D0A81C3e02e40890","0xDb16dE5985a83e6b2B13b63dA73cC59FEf4Ec05a"]}\n';
+            prompt += '\nQuery: "Get balances for 0x8315177aB297bA25A6b3C27A8D3C63d66cFf4F51 and 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"\n';
+            prompt += 'Response: TOOL_CALL:getMultiBalance:{"addresses":["0x8315177aB297bA25A6b3C27A8D3C63d66cFf4F51","0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"]}\n';
+            prompt += '\nQuery: "What token is 0xA0b86a33E6441918E634293Df0c9b7b78b147b39?"\n';
+            prompt += 'Response: TOOL_CALL:getTokenInfo:{"contractAddress":"0xA0b86a33E6441918E634293Df0c9b7b78b147b39"}\n';
+            prompt += '\nQuery: "Show me USDC transfers for 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"\n';
+            prompt += 'Response: TOOL_CALL:getERC20Transfers:{"address":"0x742d35Cc6634C0532925a3b8D0A81C3e02e40890","contractAddress":"0xA0b86a33E6441918E63..."}\n';
+            prompt += '\nQuery: "Get NFT transfers for address 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"\n';
+            prompt += 'Response: TOOL_CALL:getERC721Transfers:{"address":"0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"}\n';
+            prompt += '\nQuery: "Is 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890 a contract or wallet?"\n';
+            prompt += 'Response: TOOL_CALL:getAddressType:{"address":"0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"}\n';
+            prompt += '\nQuery: "Get gas price recommendations"\n';
+            prompt += 'Response: TOOL_CALL:getGasOracle:{}\n';
             prompt += '\nQuery: "Is 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890 a valid address?"\n';
             prompt += 'Response: TOOL_CALL:validateAddress:{"address":"0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"}\n';
             prompt += '\nQuery: "What is Arbitrum?"\n';
@@ -317,6 +365,11 @@ export class LlmService {
         cleaned = cleaned.replace(/\s*This is a simulated conversation.*?$/gmi, '');
         cleaned = cleaned.replace(/\s*The tool used.*?is not actually implemented.*?$/gmi, '');
         cleaned = cleaned.replace(/\s*does not have real-time data.*?$/gmi, '');
+
+        // Clean up weird token symbols and characters
+        cleaned = cleaned.replace(/[✅❌⚡🚀💰]/g, '');
+        cleaned = cleaned.replace(/0xUSD₮0/g, 'USDT');
+        cleaned = cleaned.replace(/\$ARB AIRDROP/g, 'ARB AIRDROP');
 
         // Clean up excessive whitespace
         cleaned = cleaned.replace(/\n\s*\n\s*\n/g, '\n\n').trim();

@@ -163,9 +163,23 @@ export class ChatService implements OnModuleInit {
                         });                        // Add tool result context and generate follow-up response with specific instructions based on tool type
                         let followUpInstruction = `Tool result: ${JSON.stringify(toolResult)}. Give me only a clean, direct answer in under 30 words. Be concise. NO disclaimers, notes, or AI warnings.`;
 
-                        // Special handling for balance queries - balance is already converted by MCP server
+                        // Special handling for different tool types
                         if (toolCall.name === 'getBalance') {
                             followUpInstruction = `Balance data: ${JSON.stringify(toolResult)}. The balance is already converted to ETH. Use the balance value directly from the result. Report as ETH. Be precise and concise. NO disclaimers or notes.`;
+                        } else if (toolCall.name === 'getMultiBalance') {
+                            followUpInstruction = `Multi-balance data: ${JSON.stringify(toolResult)}. Show a clean summary of all balances. Each balance is already converted to ETH. List each address with its balance. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getERC20Transfers' || toolCall.name === 'getERC721Transfers') {
+                            followUpInstruction = `Transfer data: ${JSON.stringify(toolResult)}. Show a summary of transfers. Token amounts are already formatted. Include key details like token symbol, amounts, and addresses. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getInternalTransactions') {
+                            followUpInstruction = `Internal transaction data: ${JSON.stringify(toolResult)}. Show a summary of internal transactions. ETH amounts are already formatted. Include key details. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getTokenInfo') {
+                            followUpInstruction = `Token info: ${JSON.stringify(toolResult)}. Show the token details including name, symbol, decimals, and supply. Supply is already formatted. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getGasOracle') {
+                            followUpInstruction = `Gas oracle data: ${JSON.stringify(toolResult)}. Show gas recommendations for safe, standard, and fast transactions. Include both Gwei and estimated times. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getAddressType') {
+                            followUpInstruction = `Address type data: ${JSON.stringify(toolResult)}. Clearly state if the address is a contract or EOA (wallet). Include relevant details. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getContractSource') {
+                            followUpInstruction = `Contract source data: ${JSON.stringify(toolResult)}. Show if the contract is verified and key details like name, compiler version. Do not show full source code. Be concise. NO disclaimers.`;
                         }
 
                         const followUpMessages: LLMMessage[] = [
