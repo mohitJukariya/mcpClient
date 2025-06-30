@@ -428,6 +428,97 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  // Graph-specific methods for creating context relationships
+  async createUserNode(userId: string, userName: string = 'Unknown'): Promise<void> {
+    const session = this.neo4jDriver.session();
+    try {
+      await session.run(`
+        MERGE (u:User {id: $userId})
+        SET u.name = $userName, u.type = 'user', u.lastActivity = datetime()
+      `, { userId, userName });
+
+      this.logger.debug(`Created/updated user node: ${userId}`);
+    } catch (error) {
+      this.logger.error(`Error creating user node: ${error.message}`);
+    } finally {
+      await session.close();
+    }
+  }
+
+  async createQueryNode(queryId: string, content: string, userId: string): Promise<void> {
+    const session = this.neo4jDriver.session();
+    try {
+      await session.run(`
+        MATCH (u:User {id: $userId})
+        CREATE (q:Query {id: $queryId, content: $content, timestamp: datetime()})
+        CREATE (u)-[:HAS_QUERY]->(q)
+      `, { queryId, content, userId });
+
+      this.logger.debug(`Created query node: ${queryId} for user: ${userId}`);
+    } catch (error) {
+      this.logger.error(`Error creating query node: ${error.message}`);
+    } finally {
+      await session.close();
+    }
+  }
+
+  async createToolUsageRelationship(queryId: string, toolName: string, toolArgs: any): Promise<void> {
+    const session = this.neo4jDriver.session();
+    try {
+      const toolId = `tool-${toolName}`;
+
+      await session.run(`
+        MATCH (q:Query {id: $queryId})
+        MERGE (t:Tool {id: $toolId, name: $toolName})
+        CREATE (q)-[:USED_TOOL {arguments: $toolArgs, timestamp: datetime()}]->(t)
+      `, { queryId, toolId, toolName, toolArgs: JSON.stringify(toolArgs) });
+
+      this.logger.debug(`Created tool usage: ${queryId} -> ${toolName}`);
+    } catch (error) {
+      this.logger.error(`Error creating tool usage: ${error.message}`);
+    } finally {
+      await session.close();
+    }
+  }
+
+  async createInsightNode(queryId: string, insight: string, confidence: number = 0.8): Promise<void> {
+    const session = this.neo4jDriver.session();
+    try {
+      const insightId = `insight-${queryId}-${Date.now()}`;
+
+      await session.run(`
+        MATCH (q:Query {id: $queryId})
+        CREATE (i:Insight {id: $insightId, content: $insight, confidence: $confidence, timestamp: datetime()})
+        CREATE (q)-[:GENERATED_INSIGHT]->(i)
+      `, { queryId, insightId, insight, confidence });
+
+      this.logger.debug(`Created insight: ${insightId} for query: ${queryId}`);
+    } catch (error) {
+      this.logger.error(`Error creating insight: ${error.message}`);
+    } finally {
+      await session.close();
+    }
+  }
+
+  async createAddressInvolvement(queryId: string, address: string, addressType: string = 'unknown'): Promise<void> {
+    const session = this.neo4jDriver.session();
+    try {
+      const addressId = `addr-${address}`;
+
+      await session.run(`
+        MATCH (q:Query {id: $queryId})
+        MERGE (a:Address {id: $addressId, address: $address, type: $addressType})
+        CREATE (q)-[:INVOLVES_ADDRESS]->(a)
+      `, { queryId, addressId, address, addressType });
+
+      this.logger.debug(`Created address involvement: ${queryId} -> ${address}`);
+    } catch (error) {
+      this.logger.error(`Error creating address involvement: ${error.message}`);
+    } finally {
+      await session.close();
+    }
+  }
+
   async getStorageHealth(): Promise<{
     redis: 'healthy' | 'down' | 'disabled';
     neo4j: 'healthy' | 'down' | 'disabled';

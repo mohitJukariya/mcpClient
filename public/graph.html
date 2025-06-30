@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Client - Context Graph Visualization</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f7;
+            color: #1a1a1a;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .container {
+            display: flex;
+            height: calc(100vh - 80px);
+        }
+
+        .sidebar {
+            width: 300px;
+            background: white;
+            border-right: 1px solid #e5e5e7;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .controls {
+            background: white;
+            padding: 15px 20px;
+            border-bottom: 1px solid #e5e5e7;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .graph-container {
+            flex: 1;
+            position: relative;
+            background: #fafafa;
+        }
+
+        #graph {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+        .section {
+            margin-bottom: 25px;
+        }
+
+        .section h3 {
+            margin: 0 0 12px 0;
+            color: #1a1a1a;
+            font-size: 16px;
+            font-weight: 600;
+            border-bottom: 2px solid #007AFF;
+            padding-bottom: 5px;
+        }
+
+        .user-selector {
+            select {
+                padding: 8px 12px;
+                border: 1px solid #d1d1d6;
+                border-radius: 8px;
+                background: white;
+                font-size: 14px;
+                min-width: 120px;
+            }
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .stat-card {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+
+        .stat-number {
+            font-size: 24px;
+            font-weight: 700;
+            color: #007AFF;
+            margin: 0;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #6c757d;
+            margin: 4px 0 0 0;
+        }
+
+        .insights-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .insights-list li {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 8px;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+        }
+
+        button {
+            padding: 8px 16px;
+            background: #007AFF;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #6c757d;
+            font-size: 16px;
+        }
+
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #f5c6cb;
+            margin: 10px 0;
+        }
+
+        .nav-tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 15px;
+        }
+
+        .nav-tab {
+            padding: 8px 16px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-bottom: none;
+            cursor: pointer;
+            border-radius: 6px 6px 0 0;
+            font-size: 13px;
+        }
+
+        .nav-tab.active {
+            background: white;
+            border-color: #007AFF;
+            color: #007AFF;
+            font-weight: 600;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+            .sidebar {
+                width: 100%;
+                height: 200px;
+            }
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .legend {
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <h1>🧠 Context Graph Visualization</h1>
+                <p>Visual representation of user interactions, tools, and insights</p>
+            </div>
+            <a href="index.html" style="background: rgba(255,255,255,0.2); color: white; padding: 10px 15px; text-decoration: none; border-radius: 6px; font-size: 14px; border: 1px solid rgba(255,255,255,0.3);">💬 Back to Chat</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="sidebar">
+            <div class="section">
+                <h3>🎯 User Selection</h3>
+                <div class="user-selector">
+                    <select id="userSelect" onchange="loadUserData()">
+                        <option value="">All Users</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="nav-tabs">
+                <div class="nav-tab active" onclick="switchTab('stats')">Stats</div>
+                <div class="nav-tab" onclick="switchTab('insights')">Insights</div>
+                <div class="nav-tab" onclick="switchTab('legend')">Legend</div>
+            </div>
+
+            <div id="statsTab" class="tab-content active">
+                <div class="section">
+                    <h3>📊 Graph Statistics</h3>
+                    <div class="stats-grid" id="statsGrid">
+                        <div class="stat-card">
+                            <div class="stat-number" id="totalNodes">-</div>
+                            <div class="stat-label">Total Nodes</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number" id="totalEdges">-</div>
+                            <div class="stat-label">Total Edges</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number" id="userNodes">-</div>
+                            <div class="stat-label">Users</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number" id="toolNodes">-</div>
+                            <div class="stat-label">Tools</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number" id="queryNodes">-</div>
+                            <div class="stat-label">Queries</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number" id="insightNodes">-</div>
+                            <div class="stat-label">Insights</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="insightsTab" class="tab-content">
+                <div class="section">
+                    <h3>💡 Context Insights</h3>
+                    <ul class="insights-list" id="insightsList">
+                        <li>Select a user to see personalized insights</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div id="legendTab" class="tab-content">
+                <div class="section">
+                    <h3>🎨 Node Types</h3>
+                    <div class="legend" id="nodeLegend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #FF6B6B;"></div>
+                            <span>User</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #4ECDC4;"></div>
+                            <span>Query</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #45B7D1;"></div>
+                            <span>Tool</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #96CEB4;"></div>
+                            <span>Address</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #FFEAA7;"></div>
+                            <span>Insight</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #DDA0DD;"></div>
+                            <span>Pattern</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="controls">
+                <button onclick="loadGraphData()">🔄 Refresh Graph</button>
+                <button onclick="fitGraph()">🎯 Fit to Screen</button>
+                <button onclick="resetZoom()">🔍 Reset Zoom</button>
+                <label>
+                    Layout:
+                    <select id="layoutSelect" onchange="changeLayout()">
+                        <option value="cose">Smart Layout</option>
+                        <option value="circle">Circle</option>
+                        <option value="grid">Grid</option>
+                        <option value="breadthfirst">Hierarchical</option>
+                        <option value="concentric">Concentric</option>
+                    </select>
+                </label>
+            </div>
+
+            <div class="graph-container">
+                <div id="graph" class="loading">Loading graph visualization...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Include Cytoscape.js for graph visualization -->
+    <script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
+    <script src="https://unpkg.com/cytoscape-cose-bilkent@4.1.0/cytoscape-cose-bilkent.js"></script>
+
+    <script>
+        let cy = null;
+        let currentUser = '';
+        let graphData = { nodes: [], edges: [] };
+
+        // Initialize the application
+        async function init() {
+            try {
+                await loadUsers();
+                await loadGraphData();
+                await loadStats();
+                initializeGraph();
+            } catch (error) {
+                console.error('Failed to initialize:', error);
+                showError('Failed to initialize application');
+            }
+        }
+
+        // Load available users
+        async function loadUsers() {
+            try {
+                const response = await fetch('/context/users');
+                const users = await response.json();
+                
+                const userSelect = document.getElementById('userSelect');
+                userSelect.innerHTML = '<option value="">All Users</option>';
+                
+                users.forEach(user => {
+                    const option = document.createElement('option');
+                    option.value = user.id;
+                    option.textContent = `${user.id} (${user.name})`;
+                    userSelect.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Failed to load users:', error);
+            }
+        }
+
+        // Load graph data
+        async function loadGraphData() {
+            try {
+                const url = currentUser ? 
+                    `/context/graph/visualization?userId=${encodeURIComponent(currentUser)}` : 
+                    '/context/graph/visualization';
+                
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                graphData = data;
+                
+                if (cy) {
+                    updateGraph();
+                }
+                
+                console.log('Graph data loaded:', data);
+            } catch (error) {
+                console.error('Failed to load graph data:', error);
+                showError('Failed to load graph data');
+            }
+        }
+
+        // Load statistics
+        async function loadStats() {
+            try {
+                const response = await fetch('/context/graph/stats');
+                const stats = await response.json();
+                
+                document.getElementById('totalNodes').textContent = stats.totalNodes || 0;
+                document.getElementById('totalEdges').textContent = stats.totalEdges || 0;
+                document.getElementById('userNodes').textContent = stats.nodeTypes?.User || 0;
+                document.getElementById('toolNodes').textContent = stats.nodeTypes?.Tool || 0;
+                document.getElementById('queryNodes').textContent = stats.nodeTypes?.Query || 0;
+                document.getElementById('insightNodes').textContent = stats.nodeTypes?.Insight || 0;
+                
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+
+        // Load user insights
+        async function loadInsights(userId) {
+            if (!userId) {
+                document.getElementById('insightsList').innerHTML = '<li>Select a user to see personalized insights</li>';
+                return;
+            }
+
+            try {
+                const response = await fetch(`/context/graph/insights/${encodeURIComponent(userId)}`);
+                const insights = await response.json();
+                
+                const insightsList = document.getElementById('insightsList');
+                if (insights.length === 0) {
+                    insightsList.innerHTML = '<li>No insights available for this user yet</li>';
+                    return;
+                }
+                
+                insightsList.innerHTML = insights.map(insight => 
+                    `<li><strong>${insight.category}:</strong> ${insight.description}</li>`
+                ).join('');
+                
+            } catch (error) {
+                console.error('Failed to load insights:', error);
+                document.getElementById('insightsList').innerHTML = '<li>Failed to load insights</li>';
+            }
+        }
+
+        // Initialize Cytoscape graph
+        function initializeGraph() {
+            const container = document.getElementById('graph');
+            container.innerHTML = '';
+
+            cy = cytoscape({
+                container: container,
+                elements: formatGraphData(graphData),
+                style: [
+                    {
+                        selector: 'node',
+                        style: {
+                            'background-color': 'data(color)',
+                            'label': 'data(label)',
+                            'width': 'data(size)',
+                            'height': 'data(size)',
+                            'text-valign': 'center',
+                            'text-halign': 'center',
+                            'font-size': '12px',
+                            'font-weight': 'bold',
+                            'text-outline-width': 2,
+                            'text-outline-color': '#ffffff',
+                            'overlay-opacity': 0.1
+                        }
+                    },
+                    {
+                        selector: 'edge',
+                        style: {
+                            'width': 'data(weight)',
+                            'line-color': 'data(color)',
+                            'target-arrow-color': 'data(color)',
+                            'target-arrow-shape': 'triangle',
+                            'curve-style': 'bezier',
+                            'label': 'data(label)',
+                            'font-size': '10px',
+                            'text-rotation': 'autorotate'
+                        }
+                    },
+                    {
+                        selector: 'node:selected',
+                        style: {
+                            'border-width': 3,
+                            'border-color': '#FF6B6B'
+                        }
+                    }
+                ],
+                layout: {
+                    name: 'cose',
+                    animate: true,
+                    animationDuration: 1000
+                }
+            });
+
+            // Add event listeners
+            cy.on('tap', 'node', function(evt) {
+                const node = evt.target;
+                console.log('Node clicked:', node.data());
+                
+                // Highlight connected nodes
+                const connectedNodes = node.neighborhood().add(node);
+                cy.elements().addClass('dimmed');
+                connectedNodes.removeClass('dimmed');
+            });
+
+            cy.on('tap', function(evt) {
+                if (evt.target === cy) {
+                    cy.elements().removeClass('dimmed');
+                }
+            });
+        }
+
+        // Format graph data for Cytoscape
+        function formatGraphData(data) {
+            const elements = [];
+
+            // Add nodes
+            if (data.nodes) {
+                data.nodes.forEach(node => {
+                    elements.push({
+                        data: {
+                            id: node.id,
+                            label: node.label || node.id,
+                            color: getNodeColor(node.type),
+                            size: getNodeSize(node.type, node.importance)
+                        }
+                    });
+                });
+            }
+
+            // Add edges
+            if (data.edges) {
+                data.edges.forEach(edge => {
+                    elements.push({
+                        data: {
+                            id: `${edge.from}-${edge.to}`,
+                            source: edge.from,
+                            target: edge.to,
+                            label: edge.relationship || '',
+                            color: getEdgeColor(edge.relationship),
+                            weight: Math.max(1, (edge.weight || 1) * 2)
+                        }
+                    });
+                });
+            }
+
+            return elements;
+        }
+
+        // Get node color based on type
+        function getNodeColor(type) {
+            const colors = {
+                'User': '#FF6B6B',
+                'Query': '#4ECDC4',
+                'Tool': '#45B7D1',
+                'Address': '#96CEB4',
+                'Insight': '#FFEAA7',
+                'Pattern': '#DDA0DD'
+            };
+            return colors[type] || '#999999';
+        }
+
+        // Get node size based on type and importance
+        function getNodeSize(type, importance = 1) {
+            const baseSizes = {
+                'User': 60,
+                'Query': 40,
+                'Tool': 50,
+                'Address': 35,
+                'Insight': 45,
+                'Pattern': 40
+            };
+            const baseSize = baseSizes[type] || 30;
+            return Math.max(20, baseSize * Math.sqrt(importance));
+        }
+
+        // Get edge color based on relationship
+        function getEdgeColor(relationship) {
+            const colors = {
+                'ASKED': '#4ECDC4',
+                'USED': '#45B7D1',
+                'ANALYZED': '#96CEB4',
+                'GENERATED': '#FFEAA7',
+                'RELATES_TO': '#DDA0DD'
+            };
+            return colors[relationship] || '#CCCCCC';
+        }
+
+        // Update existing graph
+        function updateGraph() {
+            if (!cy) return;
+            
+            const elements = formatGraphData(graphData);
+            cy.elements().remove();
+            cy.add(elements);
+            cy.layout({ name: 'cose', animate: true }).run();
+        }
+
+        // Event handlers
+        async function loadUserData() {
+            currentUser = document.getElementById('userSelect').value;
+            await loadGraphData();
+            await loadInsights(currentUser);
+            await loadStats();
+        }
+
+        function changeLayout() {
+            if (!cy) return;
+            
+            const layout = document.getElementById('layoutSelect').value;
+            cy.layout({ name: layout, animate: true }).run();
+        }
+
+        function fitGraph() {
+            if (cy) cy.fit();
+        }
+
+        function resetZoom() {
+            if (cy) cy.zoom(1).center();
+        }
+
+        function switchTab(tabName) {
+            // Update tab buttons
+            document.querySelectorAll('.nav-tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelector(`.nav-tab:nth-child(${tabName === 'stats' ? 1 : tabName === 'insights' ? 2 : 3})`).classList.add('active');
+            
+            // Update tab content
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.getElementById(`${tabName}Tab`).classList.add('active');
+        }
+
+        function showError(message) {
+            const graphContainer = document.getElementById('graph');
+            graphContainer.innerHTML = `<div class="error">${message}</div>`;
+        }
+
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>

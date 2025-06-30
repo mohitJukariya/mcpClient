@@ -50,6 +50,9 @@ export class ChatService implements OnModuleInit {
             // Get or create session
             const session = this.getOrCreateSession(actualSessionId);
 
+            // Store query ID for later use in tool relationships
+            let currentQueryId: string | null = null;
+
             // Store embedding for user message
             const userMessageIndex = session.messageCount;
             try {
@@ -69,6 +72,13 @@ export class ChatService implements OnModuleInit {
                 try {
                     const user = await this.contextUserService.getUserById(userId);
                     if (user) {
+                        // Create user node if not exists
+                        await this.contextStorage.createUserNode(userId, user.name);
+
+                        // Create query node and relationship
+                        currentQueryId = `query-${userId}-${Date.now()}`;
+                        await this.contextStorage.createQueryNode(currentQueryId, message, userId);
+
                         const contextEntry = {
                             id: `ctx-${userId}-${Date.now()}`,
                             userId,
@@ -78,7 +88,8 @@ export class ChatService implements OnModuleInit {
                                 timestamp: new Date().toISOString(),
                                 toolsUsed: [],
                                 confidence: 0.9,
-                                relatedEntries: []
+                                relatedEntries: [],
+                                queryId: currentQueryId // Store the graph query ID
                             }
                         };
                         await this.contextStorage.storeUserContext(user, contextEntry);
@@ -166,7 +177,36 @@ export class ChatService implements OnModuleInit {
                             name: toolCall.name,
                             arguments: toolCall.arguments,
                             result: toolResult,
-                        });                        // Add tool result context and generate follow-up response with specific instructions based on tool type
+                        });
+
+                        // Create graph relationships for tool usage
+                        if (userId && currentQueryId) {
+                            try {
+                                // Create tool usage relationship
+                                await this.contextStorage.createToolUsageRelationship(
+                                    currentQueryId,
+                                    toolCall.name,
+                                    toolCall.arguments
+                                );
+
+                                // Create address involvement if tool involves addresses
+                                if (toolCall.arguments.address) {
+                                    await this.contextStorage.createAddressInvolvement(
+                                        currentQueryId,
+                                        toolCall.arguments.address,
+                                        'user_query'
+                                    );
+                                }
+
+                                // Create insight based on tool result
+                                const insightContent = this.generateInsightFromToolResult(toolCall.name, toolResult);
+                                if (insightContent) {
+                                    await this.contextStorage.createInsightNode(currentQueryId, insightContent, 0.8);
+                                }
+                            } catch (graphError) {
+                                this.logger.warn(`Failed to create graph relationships: ${graphError.message}`);
+                            }
+                        }                        // Add tool result context and generate follow-up response with specific instructions based on tool type
                         let followUpInstruction = `Tool result: ${JSON.stringify(toolResult)}. Give me only a clean, direct answer in under 30 words. Be concise. NO disclaimers, notes, or AI warnings.`;
 
                         // Special handling for different tool types
@@ -394,5 +434,27 @@ export class ChatService implements OnModuleInit {
         cleaned = cleaned.replace(/\s+\./g, '.').replace(/\s+/g, ' ').trim();
 
         return cleaned;
+    }
+
+    private generateInsightFromToolResult(toolName: string, toolResult: any): string | null {
+        try {
+            switch (toolName) {
+                case 'getGasPrice':
+                    return `Current gas price analysis: ${toolResult.result || 'Gas price data retrieved'}`;
+                case 'getBalance':
+                    return `Balance analysis for address: Shows ${toolResult.formatted || 'balance data'}`;
+                case 'getTokenInfo':
+                    return `Token research: ${toolResult.name || 'Token'} analysis completed`;
+                case 'getTransaction':
+                    return `Transaction analysis: ${toolResult.status || 'Transaction'} details retrieved`;
+                case 'getTransactionHistory':
+                    return `Transaction history pattern: ${toolResult.length || 0} transactions analyzed`;
+                default:
+                    return `${toolName} analysis completed with insights`;
+            }
+        } catch (error) {
+            this.logger.warn(`Error generating insight: ${error.message}`);
+            return null;
+        }
     }
 }
