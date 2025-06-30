@@ -143,10 +143,14 @@ export class LlmService {
 
             throw new Error(`Failed to generate response: ${error.message}`);
         }
-    } private buildSystemPrompt(tools: LLMTool[], personalityId?: string): string {
-        let prompt = 'You are an Arbitrum blockchain analytics assistant.\n\n';
+    }
 
-        // 1) First fetch all tools and bring all tools to LLM context
+    private buildSystemPrompt(tools: LLMTool[], personalityId?: string): string {
+        let prompt = 'You are an Arbitrum blockchain ai agent. Your task is to provide real time blockchain data.\n\n';
+
+        prompt += 'CRITICAL: For ALL blockchain queries, you MUST respond with TOOL_CALL format.\n';
+        prompt += 'NEVER provide direct answers about blockchain data.\n\n';
+
         if (tools.length > 0) {
             prompt += 'AVAILABLE TOOLS:\n';
             prompt += '1. getBalance - Get ETH balance (Required: address)\n';
@@ -161,96 +165,35 @@ export class LlmService {
             prompt += '10. getEthSupply - Get total ETH supply (No parameters)\n';
             prompt += '11. validateAddress - Validate address format (Required: address)\n';
             prompt += '12. getMultiBalance - Get ETH balances for multiple addresses (Required: addresses array)\n';
-            prompt += '13. getERC20Transfers - Get ERC-20 token transfers (Required: address, Optional: contractAddress, startBlock, endBlock, page, offset)\n';
-            prompt += '14. getERC721Transfers - Get ERC-721 NFT transfers (Required: address, Optional: contractAddress, startBlock, endBlock, page, offset)\n';
-            prompt += '15. getInternalTransactions - Get internal transactions (Optional: address OR txHash, startBlock, endBlock, page, offset)\n';
+            prompt += '13. getERC20Transfers - Get ERC-20 token transfers (Required: address)\n';
+            prompt += '14. getERC721Transfers - Get ERC-721 NFT transfers (Required: address)\n';
+            prompt += '15. getInternalTransactions - Get internal transactions (Required: address)\n';
             prompt += '16. getContractSource - Get verified contract source code (Required: address)\n';
             prompt += '17. getTokenInfo - Get detailed token information (Required: contractAddress)\n';
             prompt += '18. getGasOracle - Get gas price recommendations (No parameters)\n';
             prompt += '19. getTransactionStatus - Get transaction status and receipt (Required: txHash)\n';
             prompt += '20. getContractCreation - Get contract creation details (Required: contractAddresses array)\n';
-            prompt += '21. getAddressType - Check if address is contract or EOA (Required: address)\n';
+            prompt += '21. getAddressType - Check if address is contract or EOA (Required: address)\n\n';
 
-            prompt += '\nDECISION PROCESS:\n';
-            prompt += 'Step 1: Read the user query carefully\n';
-            prompt += 'Step 2: Identify the type of data requested:\n';
-            prompt += '  • Single address balance → getBalance\n';
-            prompt += '  • Multiple addresses balance (2 or more addresses) → getMultiBalance\n';
-            prompt += '  • Token transfers/history → getERC20Transfers\n';
-            prompt += '  • NFT transfers → getERC721Transfers\n';
-            prompt += '  • Internal transactions → getInternalTransactions\n';
-            prompt += '  • Contract verification/source → getContractSource\n';
-            prompt += '  • Token details/info (what token is X?) → getTokenInfo\n';
-            prompt += '  • Gas prices/recommendations → getGasOracle or getGasPrice\n';
-            prompt += '  • Transaction status → getTransactionStatus\n';
-            prompt += '  • Contract creation → getContractCreation\n';
-            prompt += '  • Address type (contract/wallet) → getAddressType\n';
-            prompt += 'Step 3: If specific data provided, use the matching tool\n';
-            prompt += 'Step 4: If no specific data, answer as general knowledge\n';
+            prompt+= ' You should always be ready to use any tool which is relevant to the task mentioned in the query from user. You can execute following tools to perform varoius operations on the arbitrum blockchain. Feel free to use any tool which is closest to the user intent. You just have to use the tool call. You can not respond with normal chat response unless explicitly asked. Also if there are multiple tools matching from user intent then use your intelligence to use one tool among them which is best suited.\n\n';
 
-            prompt += '\nCRITICAL TOOL SELECTION RULES:\n';
-            prompt += '• MULTIPLE ADDRESSES: If query contains 2+ addresses, ALWAYS use getMultiBalance\n';
-            prompt += '• TOKEN IDENTIFICATION: If asked "what token is [address]?", ALWAYS use getTokenInfo\n';
-            prompt += '• PREFER TOOLS: Always use tools when addresses/hashes provided, never answer from knowledge\n';
-            prompt += '• ADDRESS COUNT: Count addresses in query - if 2+, use getMultiBalance not getBalance\n';
-            prompt += '• PATTERN DETECTION: Look for phrases like "balances for", "ETH balances", "check balances"\n';
-            prompt += '• TOKEN QUESTIONS: "What token", "token details", "token info" with address → getTokenInfo\n';
+            prompt += 'MANDATORY RESPONSE FORMAT:\n';
+            prompt += 'You MUST respond with: TOOL_CALL:toolname:{"parameter":"value"}\n\n';
 
-            prompt += '\nTOOL USAGE RULES:\n';
-            prompt += '• Use tools ONLY when user provides specific data to retrieve\n';
-            prompt += '• Format: TOOL_CALL:toolname:{"parameter":"value"}\n';
-            prompt += '• For general questions, provide educational answers without tools\n';
-            prompt += '• MANDATORY: If query contains contract addresses, ALWAYS use getTokenInfo\n';
-            prompt += '• MANDATORY: If query contains 2+ addresses for balances, ALWAYS use getMultiBalance\n';
-            prompt += '• NEVER answer from knowledge when specific addresses/hashes are provided\n';
+            prompt += 'EXAMPLES:\n';
+            prompt += 'User: "current gas price"\n';
+            prompt += 'You: TOOL_CALL:getGasPrice:{}\n\n';
+            prompt += 'User: "balance of 0x123"\n';
+            prompt += 'You: TOOL_CALL:getBalance:{"address":"0x123"}\n\n';
+            prompt += 'User: "what token is 0xabc?"\n';
+            prompt += 'You: TOOL_CALL:getTokenInfo:{"contractAddress":"0xabc"}\n\n';
+        }
 
-            prompt += '\nBALANCE INTERPRETATION RULES:\n';
-            prompt += '• getBalance returns the actual ETH balance already converted\n';
-            prompt += '• getTokenBalance returns the actual token balance already converted\n';
-            prompt += '• Use the balance value directly from the tool response\n';
-            prompt += '• Present balances with appropriate units (ETH for getBalance, token symbol for getTokenBalance)\n';
-            prompt += '• NO manual conversion needed - balances are ready to display\n';
+        prompt += 'IMPORTANT: Start your response with "TOOL_CALL:" - do not write anything else first.\n';
 
-            prompt += '\nRESPONSE FORMATTING RULES:\n';
-            prompt += '• Give direct, concise answers without disclaimers\n';
-            prompt += '• NO "Note:" statements or AI disclaimers\n';
-            prompt += '• NO "This response is generated by an AI" messages\n';
-            prompt += '• NO "real-time data" warnings\n';
-            prompt += '• NO "simulated conversation" notes\n';
-            prompt += '• When using tools, present results as factual data\n';
-            prompt += '• Be confident and direct in your responses\n';
-
-            prompt += '\nEXAMPLES:\n';
-            prompt += 'Query: "ETH balance of 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"\n';
-            prompt += 'Response: TOOL_CALL:getBalance:{"address":"0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"}\n';
-            prompt += 'After tool result: "The balance is [balance value] ETH."\n';
-            prompt += '\nQuery: "Check ETH balances for 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890 and 0xDb16dE5985a83e6b2B13b63dA73cC59FEf4Ec05a"\n';
-            prompt += 'Response: TOOL_CALL:getMultiBalance:{"addresses":["0x742d35Cc6634C0532925a3b8D0A81C3e02e40890","0xDb16dE5985a83e6b2B13b63dA73cC59FEf4Ec05a"]}\n';
-            prompt += '\nQuery: "What are the balances for these addresses: 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890, 0xDb16dE5985a83e6b2B13b63dA73cC59FEf4Ec05a"\n';
-            prompt += 'Response: TOOL_CALL:getMultiBalance:{"addresses":["0x742d35Cc6634C0532925a3b8D0A81C3e02e40890","0xDb16dE5985a83e6b2B13b63dA73cC59FEf4Ec05a"]}\n';
-            prompt += '\nQuery: "Get balances for 0x8315177aB297bA25A6b3C27A8D3C63d66cFf4F51 and 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"\n';
-            prompt += 'Response: TOOL_CALL:getMultiBalance:{"addresses":["0x8315177aB297bA25A6b3C27A8D3C63d66cFf4F51","0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"]}\n';
-            prompt += '\nQuery: "What token is 0xA0b86a33E6441918E634293Df0c9b7b78b147b39?"\n';
-            prompt += 'Response: TOOL_CALL:getTokenInfo:{"contractAddress":"0xA0b86a33E6441918E634293Df0c9b7b78b147b39"}\n';
-            prompt += '\nQuery: "Show me USDC transfers for 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"\n';
-            prompt += 'Response: TOOL_CALL:getERC20Transfers:{"address":"0x742d35Cc6634C0532925a3b8D0A81C3e02e40890","contractAddress":"0xA0b86a33E6441918E63..."}\n';
-            prompt += '\nQuery: "Get NFT transfers for address 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"\n';
-            prompt += 'Response: TOOL_CALL:getERC721Transfers:{"address":"0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"}\n';
-            prompt += '\nQuery: "Is 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890 a contract or wallet?"\n';
-            prompt += 'Response: TOOL_CALL:getAddressType:{"address":"0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"}\n';
-            prompt += '\nQuery: "Get gas price recommendations"\n';
-            prompt += 'Response: TOOL_CALL:getGasOracle:{}\n';
-            prompt += '\nQuery: "Is 0x742d35Cc6634C0532925a3b8D0A81C3e02e40890 a valid address?"\n';
-            prompt += 'Response: TOOL_CALL:validateAddress:{"address":"0x742d35Cc6634C0532925a3b8D0A81C3e02e40890"}\n';
-            prompt += '\nQuery: "What is Arbitrum?"\n';
-            prompt += 'Response: Arbitrum is a Layer 2 scaling solution for Ethereum that uses optimistic rollups...\n';
-            prompt += '\nQuery: "Current gas price"\n';
-            prompt += 'Response: TOOL_CALL:getGasPrice:{}\n';
-            prompt += 'After tool result: "The current gas price is [gas price value] Gwei."\n';
-            if (personalityId) {
-                const personalityPrompt = this.personalityService.getPersonalitySystemPrompt(personalityId, prompt);
-                return personalityPrompt;
-            }
+        if (personalityId) {
+            const personalityPrompt = this.personalityService.getPersonalitySystemPrompt(personalityId, prompt);
+            return personalityPrompt;
         }
 
         return prompt;
@@ -264,12 +207,17 @@ export class LlmService {
         // Primary pattern: TOOL_CALL:toolname:{"param":"value"}
         const toolCallPattern = /TOOL_CALL:(\w+):\s*({.*?}|\{\})/g;
 
+        // Alternative pattern: toolname:toolname:{} (what we're getting)
+        const alternativePattern = /(\w+):(\w+):\s*({.*?}|\{\})/g;
+
         let match;
+
+        // Try primary pattern first
         while ((match = toolCallPattern.exec(content)) !== null) {
             const toolName = match[1];
             const argsString = match[2];
 
-            this.logger.debug(`🔍 Found tool call: ${toolName} with args: ${argsString}`);
+            this.logger.debug(`🔍 Found tool call (primary): ${toolName} with args: ${argsString}`);
 
             // Check if the tool exists
             const tool = tools.find(t => t.name === toolName);
@@ -280,11 +228,39 @@ export class LlmService {
                     this.logger.log(`✅ Extracted tool call: ${toolName}`, toolArguments);
                 } catch (error) {
                     this.logger.warn(`❌ Failed to parse tool arguments for ${toolName}: ${argsString}`);
-                    // Use empty arguments if parsing fails but tool exists
                     toolCalls.push({ name: toolName, arguments: {} });
                 }
             } else {
                 this.logger.warn(`🚫 Tool '${toolName}' not found in available tools`);
+            }
+        }
+
+        // If no primary pattern found, try alternative pattern
+        if (toolCalls.length === 0) {
+            while ((match = alternativePattern.exec(content)) !== null) {
+                const toolName1 = match[1];
+                const toolName2 = match[2];
+                const argsString = match[3];
+
+                // Use the first tool name if they match, or try both
+                const toolName = toolName1 === toolName2 ? toolName1 : toolName1;
+
+                this.logger.debug(`🔍 Found tool call (alternative): ${toolName} with args: ${argsString}`);
+
+                // Check if the tool exists
+                const tool = tools.find(t => t.name === toolName);
+                if (tool) {
+                    try {
+                        const toolArguments = JSON.parse(argsString);
+                        toolCalls.push({ name: toolName, arguments: toolArguments });
+                        this.logger.log(`✅ Extracted tool call (alternative): ${toolName}`, toolArguments);
+                    } catch (error) {
+                        this.logger.warn(`❌ Failed to parse tool arguments for ${toolName}: ${argsString}`);
+                        toolCalls.push({ name: toolName, arguments: {} });
+                    }
+                } else {
+                    this.logger.warn(`🚫 Tool '${toolName}' not found in available tools`);
+                }
             }
         }
 
@@ -317,10 +293,18 @@ export class LlmService {
 
         // Remove tool calls from the visible response but log them
         const toolCallMatches = cleaned.match(/TOOL_CALL:[^\n]*/g);
+        const alternativeMatches = cleaned.match(/\w+:\w+:\s*\{.*?\}/g);
+
         if (toolCallMatches) {
             this.logger.debug(`Found ${toolCallMatches.length} tool calls: ${toolCallMatches.join(', ')}`);
         }
+        if (alternativeMatches) {
+            this.logger.debug(`Found ${alternativeMatches.length} alternative format tool calls: ${alternativeMatches.join(', ')}`);
+        }
+
+        // Remove both formats from visible response
         cleaned = cleaned.replace(/TOOL_CALL:[^\n]*\n?/g, '');
+        cleaned = cleaned.replace(/\w+:\w+:\s*\{.*?\}\n?/g, '');
 
         // Remove assistant prefixes only at the very beginning
         cleaned = cleaned.replace(/^(Assistant:|AI:|Bot:)\s*/i, '');
