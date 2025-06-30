@@ -8,6 +8,7 @@ import { EmbeddingsModule } from './embeddings/embeddings.module';
 import { ContextModule } from './context/context.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { FailsafeModule } from './failsafe/failsafe.module';
+import { PersonalityModule } from './personality/personality.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
@@ -26,6 +27,7 @@ import { AppService } from './app.service';
         ContextModule,
         AnalyticsModule,
         FailsafeModule,
+        PersonalityModule,
     ],
     controllers: [AppController],
     providers: [AppService],

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InferenceClient } from '@huggingface/inference';
+import { PersonalityService } from '../personality/personality.service';
 
 export interface LLMMessage {
     role: 'user' | 'assistant' | 'system';
@@ -26,6 +27,7 @@ export class LlmService {
     private readonly logger = new Logger(LlmService.name);
     private hf: InferenceClient;
     private model: string;
+    private personalityService: PersonalityService;
 
     constructor(private configService: ConfigService) {
         const apiKey = this.configService.get<string>('HUGGINGFACE_API_KEY');
@@ -37,13 +39,15 @@ export class LlmService {
         this.hf = new InferenceClient(apiKey);
         // Only support Mistral-7B-Instruct-v0.3
         this.model = 'mistralai/Mistral-7B-Instruct-v0.3';
+        this.personalityService = new PersonalityService();
 
         this.logger.log(`Initialized LLM service with model: ${this.model}`);
     }
 
     async generateResponse(
         messages: LLMMessage[],
-        tools: LLMTool[] = []
+        tools: LLMTool[] = [],
+        personalityId?: string
     ): Promise<LLMResponse> {
         if (!this.hf) {
             this.logger.warn('Hugging Face client not initialized, using local fallback');
@@ -51,8 +55,8 @@ export class LlmService {
         }
 
         try {
-            this.logger.log(`Generating response with model: ${this.model}`);
-            const response = await this.generateWithHuggingFace(messages, tools);
+            this.logger.log(`Generating response with model: ${this.model}, personality: ${personalityId || 'default'}`);
+            const response = await this.generateWithHuggingFace(messages, tools, personalityId);
 
             // Log the raw response for debugging
             this.logger.debug(`Raw LLM response length: ${response.content.length}`);
@@ -68,11 +72,13 @@ export class LlmService {
 
     private async generateWithHuggingFace(
         messages: LLMMessage[],
-        tools: LLMTool[]
+        tools: LLMTool[],
+        personalityId?: string
     ): Promise<LLMResponse> {
         try {
-            const systemPrompt = this.buildSystemPrompt(tools);
+            const systemPrompt = this.buildSystemPrompt(tools, personalityId);
             this.logger.debug('🔧 System prompt:', systemPrompt);
+            console.log('🔧 SYSTEM PROMPT BEING SENT:', systemPrompt);
 
             // Use chat completion API for Mistral-7B-Instruct-v0.3
             const chatMessages = this.convertToChatFormat(messages, systemPrompt);
@@ -87,8 +93,16 @@ export class LlmService {
                 stream: false
             });
 
+            console.log('🤖 FULL HF RESPONSE:', JSON.stringify(response, null, 2));
+
             let content = response.choices?.[0]?.message?.content?.trim() || '';
             this.logger.debug('🤖 Raw Mistral response:', content);
+            console.log('🤖 RAW LLM RESPONSE:', content);
+
+            if (!content) {
+                console.log('❌ EMPTY RESPONSE FROM LLM!');
+                console.log('Response object:', response);
+            }
 
             // Extract tool calls
             const toolCalls = this.extractToolCalls(content, tools);
@@ -97,6 +111,12 @@ export class LlmService {
             content = this.cleanResponse(content);
 
             this.logger.debug('✨ Final response:', { content, toolCalls });
+            console.log('✨ FINAL LLM SERVICE RESPONSE:', {
+                contentLength: content?.length || 0,
+                content: content,
+                toolCallsCount: toolCalls?.length || 0,
+                toolCalls: toolCalls
+            });
 
             return {
                 content,
@@ -123,11 +143,10 @@ export class LlmService {
 
             throw new Error(`Failed to generate response: ${error.message}`);
         }
-    }
-
-    private buildSystemPrompt(tools: LLMTool[]): string {
+    } private buildSystemPrompt(tools: LLMTool[], personalityId?: string): string {
         let prompt = 'You are an Arbitrum blockchain analytics assistant.\n\n';
 
+        // 1) First fetch all tools and bring all tools to LLM context
         if (tools.length > 0) {
             prompt += 'AVAILABLE TOOLS:\n';
             prompt += '1. getBalance - Get ETH balance (Required: address)\n';
@@ -228,63 +247,13 @@ export class LlmService {
             prompt += '\nQuery: "Current gas price"\n';
             prompt += 'Response: TOOL_CALL:getGasPrice:{}\n';
             prompt += 'After tool result: "The current gas price is [gas price value] Gwei."\n';
+            if (personalityId) {
+                const personalityPrompt = this.personalityService.getPersonalitySystemPrompt(personalityId, prompt);
+                return personalityPrompt;
+            }
         }
 
         return prompt;
-    }
-
-    private formatMessages(messages: LLMMessage[], systemPrompt: string): string {
-        let formatted = `<|system|>\n${systemPrompt}\n`;
-
-        // Keep only the last few messages to avoid token limits
-        const recentMessages = messages.slice(-4);
-
-        recentMessages.forEach(message => {
-            if (message.role === 'user') {
-                formatted += `<|user|>\n${message.content}\n`;
-            } else if (message.role === 'assistant') {
-                formatted += `<|assistant|>\n${message.content}\n`;
-            }
-        });
-
-        formatted += '<|assistant|>\n';
-        return formatted;
-    }
-
-    private formatMessagesForT5(messages: LLMMessage[], systemPrompt: string): string {
-        // T5 models work better with simple, direct prompts
-        let formatted = `${systemPrompt}\n\n`;
-
-        // Keep only the most recent message for T5 to avoid confusion
-        const lastMessage = messages[messages.length - 1];
-        if (lastMessage && lastMessage.role === 'user') {
-            formatted += `Question: ${lastMessage.content}\nAnswer:`;
-        }
-
-        return formatted;
-    }
-
-    private formatConversationForGeneration(messages: LLMMessage[], systemPrompt: string): string {
-        // Format conversation for DialoGPT text generation
-        let formatted = '';
-
-        if (systemPrompt) {
-            formatted += `System: ${systemPrompt}\n`;
-        }
-
-        // Add conversation history
-        for (const message of messages) {
-            if (message.role === 'user') {
-                formatted += `Human: ${message.content}\n`;
-            } else if (message.role === 'assistant') {
-                formatted += `Assistant: ${message.content}\n`;
-            }
-        }
-
-        // Add prompt for assistant response
-        formatted += 'Assistant:';
-
-        return formatted;
     }
 
     private extractToolCalls(content: string, tools: LLMTool[]): Array<{ name: string; arguments: any }> {
@@ -414,6 +383,31 @@ export class LlmService {
 
         // This will trigger the failsafe system in the chat service
         throw new Error('LLM service unavailable - falling back to failsafe system');
+    }
+
+    private getPersonalityTemperature(personalityId?: string): number {
+        if (!personalityId) return 0.1;
+
+        const personality = this.personalityService.getPersonality(personalityId);
+        if (!personality) return 0.1;
+
+        // Different personalities get different temperatures
+        switch (personalityId) {
+            case 'alice': return 0.1; // More focused, analytical
+            case 'bob': return 0.15;  // Slightly more technical variation
+            case 'charlie': return 0.2; // More creative in analysis
+            default: return 0.1;
+        }
+    }
+
+    // Helper method to get personality info
+    getPersonalityInfo(personalityId: string) {
+        return this.personalityService.getPersonality(personalityId);
+    }
+
+    // Helper method to get all personalities
+    getAllPersonalities() {
+        return this.personalityService.getAllPersonalities();
     }
 
 }

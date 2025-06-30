@@ -12,11 +12,16 @@ export class ChatRequestDto {
     @IsString()
     @IsOptional()
     userId?: string;
+
+    @IsString()
+    @IsOptional()
+    personalityId?: string;
 }
 
 export class ChatResponseDto {
     response: string;
     sessionId: string;
+    personalityId?: string;
     toolsUsed?: Array<{
         name: string;
         arguments: any;

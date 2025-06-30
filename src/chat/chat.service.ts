@@ -37,7 +37,12 @@ export class ChatService implements OnModuleInit {
         this.logger.log('ChatService initialized with MCP connection and Hugging Face LLM');
     }
 
-    async processMessage(message: string, sessionId?: string, userId?: string): Promise<ChatResponseDto> {
+    async processMessage(
+        message: string,
+        sessionId?: string,
+        userId?: string,
+        personalityId?: string
+    ): Promise<ChatResponseDto> {
         try {
             // Generate session ID if not provided
             const actualSessionId = sessionId || this.generateSessionId();
@@ -135,10 +140,11 @@ export class ChatService implements OnModuleInit {
                 ];
             }
 
-            // Generate initial response from LLM
+            // Generate initial response from LLM with personality
             const llmResponse = await this.llmService.generateResponse(
                 messagesForLLM,
                 tools,
+                personalityId
             );
 
             console.log("initial response", llmResponse);
@@ -165,9 +171,11 @@ export class ChatService implements OnModuleInit {
 
                         // Special handling for different tool types
                         if (toolCall.name === 'getBalance') {
-                            followUpInstruction = `Balance data: ${JSON.stringify(toolResult)}. The balance is already converted to ETH. Use the balance value directly from the result. Report as ETH. Be precise and concise. NO disclaimers or notes.`;
+                            followUpInstruction = `Balance data: ${JSON.stringify(toolResult)}. The balance is already converted to ETH. Use the "formatted" balance value directly from the result. Show the formatted balance to the user. Be precise and concise. NO disclaimers or notes.`;
                         } else if (toolCall.name === 'getMultiBalance') {
-                            followUpInstruction = `Multi-balance data: ${JSON.stringify(toolResult)}. Show a clean summary of all balances. Each balance is already converted to ETH. List each address with its balance. Be concise. NO disclaimers.`;
+                            followUpInstruction = `Multi-balance data: ${JSON.stringify(toolResult)}. Show a clean summary of all balances. Each balance is already converted to ETH. Use the "formatted" balance values for each address. List each address with its formatted balance. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getTransactionHistory') {
+                            followUpInstruction = `Transaction history data: ${JSON.stringify(toolResult)}. Show the most recent 5-10 transactions in a readable format. Include: transaction hash (first 8 chars), block number, timestamp, from/to addresses (first 8 chars each), value in ETH, gas used, and status. Format as a table or list. Be concise. NO disclaimers.`;
                         } else if (toolCall.name === 'getERC20Transfers' || toolCall.name === 'getERC721Transfers') {
                             followUpInstruction = `Transfer data: ${JSON.stringify(toolResult)}. Show a summary of transfers. Token amounts are already formatted. Include key details like token symbol, amounts, and addresses. Be concise. NO disclaimers.`;
                         } else if (toolCall.name === 'getInternalTransactions') {
@@ -180,6 +188,28 @@ export class ChatService implements OnModuleInit {
                             followUpInstruction = `Address type data: ${JSON.stringify(toolResult)}. Clearly state if the address is a contract or EOA (wallet). Include relevant details. Be concise. NO disclaimers.`;
                         } else if (toolCall.name === 'getContractSource') {
                             followUpInstruction = `Contract source data: ${JSON.stringify(toolResult)}. Show if the contract is verified and key details like name, compiler version. Do not show full source code. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getTransaction') {
+                            followUpInstruction = `Transaction data: ${JSON.stringify(toolResult)}. Show transaction details: hash, block number, from/to addresses, value in ETH, gas used, status, and timestamp. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getTransactionReceipt') {
+                            followUpInstruction = `Transaction receipt data: ${JSON.stringify(toolResult)}. Show receipt details: status, gas used, block number, and any logs/events. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getGasPrice') {
+                            followUpInstruction = `Gas price data: ${JSON.stringify(toolResult)}. Show current gas price in Gwei and estimated cost implications. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getBlock') {
+                            followUpInstruction = `Block data: ${JSON.stringify(toolResult)}. Show block details: number, timestamp, transaction count, gas used/limit, and hash. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getLatestBlock') {
+                            followUpInstruction = `Latest block data: ${JSON.stringify(toolResult)}. Show the latest block number and basic details. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getTokenBalance') {
+                            followUpInstruction = `Token balance data: ${JSON.stringify(toolResult)}. Show the token balance with proper symbol and decimals. Use formatted balance if available. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getContractAbi') {
+                            followUpInstruction = `Contract ABI data: ${JSON.stringify(toolResult)}. Show if ABI is available and list the main functions/events. Do not show full ABI. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getEthSupply') {
+                            followUpInstruction = `ETH supply data: ${JSON.stringify(toolResult)}. Show the total ETH supply in a readable format with proper units. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'validateAddress') {
+                            followUpInstruction = `Address validation data: ${JSON.stringify(toolResult)}. Clearly state if the address is valid or invalid with the reason. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getTransactionStatus') {
+                            followUpInstruction = `Transaction status data: ${JSON.stringify(toolResult)}. Show transaction status (success/failed), gas used, and confirmation details. Be concise. NO disclaimers.`;
+                        } else if (toolCall.name === 'getContractCreation') {
+                            followUpInstruction = `Contract creation data: ${JSON.stringify(toolResult)}. Show contract creator address, creation transaction hash, and block number. Be concise. NO disclaimers.`;
                         }
 
                         const followUpMessages: LLMMessage[] = [
@@ -194,7 +224,7 @@ export class ChatService implements OnModuleInit {
                             },
                         ];
 
-                        const followUpResponse = await this.llmService.generateResponse(followUpMessages, []);
+                        const followUpResponse = await this.llmService.generateResponse(followUpMessages, [], personalityId);
                         finalResponse = this.convertHexToDecimal(followUpResponse.content);
 
                         console.log("final follow up response after tool call", finalResponse);
@@ -252,6 +282,7 @@ export class ChatService implements OnModuleInit {
                 response: finalResponse || 'I apologize, but I couldn\'t generate a response.',
                 sessionId: actualSessionId,
                 toolsUsed: toolsUsed.length > 0 ? toolsUsed : undefined,
+                personalityId: personalityId || null,
             };
 
         } catch (error) {
