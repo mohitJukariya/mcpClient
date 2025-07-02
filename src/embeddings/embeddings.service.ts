@@ -28,6 +28,15 @@ export interface ContextResult {
   sessionId: string;
 }
 
+interface ModelPerformance {
+  model: string;
+  averageResponseTime: number;
+  successCount: number;
+  failureCount: number;
+  lastSuccessTime: number;
+  isWarmedUp: boolean;
+}
+
 @Injectable()
 export class EmbeddingsService {
   private readonly logger = new Logger(EmbeddingsService.name);
@@ -36,6 +45,9 @@ export class EmbeddingsService {
   private indexName: string;
   private embeddingModels: string[];
   private embeddingDimension: number;
+  private modelPerformance: Map<string, ModelPerformance> = new Map();
+  private embeddingCache: Map<string, { embedding: number[]; timestamp: number }> = new Map();
+  private isInitialized = false;
 
   constructor(private configService: ConfigService) {
     // Initialize Pinecone
@@ -58,15 +70,48 @@ export class EmbeddingsService {
     this.hf = new InferenceClient(hfApiKey);
     this.indexName = this.configService.get<string>('PINECONE_INDEX_NAME') || 'arbitrum-chat-embeddings';
 
-    // Multiple embedding models as fallbacks - ALL 384 dimensions for compatibility
+    // Optimized embedding models - fast and reliable 384d models
     this.embeddingModels = [
-      'sentence-transformers/multi-qa-MiniLM-L6-cos-v1',     // Primary (384d) - Working ✅
-      'sentence-transformers/all-MiniLM-L6-v2', // Fallback 1 (384d) - Compatible ✅
+      'sentence-transformers/all-MiniLM-L6-v2',          // Fast, reliable
+      'sentence-transformers/multi-qa-MiniLM-L6-cos-v1', // Good for Q&A
+      'sentence-transformers/all-MiniLM-L12-v2',         // More accurate
+      'intfloat/e5-small-v2',                           // Alternative
+      'BAAI/bge-small-en-v1.5',                         // Good performance
     ];
 
     this.embeddingDimension = parseInt(this.configService.get<string>('EMBEDDING_DIMENSION') || '384');
 
-    this.logger.log(`Initialized Embeddings Service with ${this.embeddingModels.length} fallback models`);
+    // Initialize model performance tracking
+    this.initializeModelPerformance();
+
+    this.logger.log(`Initialized Embeddings Service with ${this.embeddingModels.length} models`);
+
+    // Start async initialization
+    this.initializeAsync();
+  }
+
+  private initializeModelPerformance(): void {
+    this.embeddingModels.forEach(model => {
+      this.modelPerformance.set(model, {
+        model,
+        averageResponseTime: 0,
+        successCount: 0,
+        failureCount: 0,
+        lastSuccessTime: 0,
+        isWarmedUp: false
+      });
+    });
+  }
+
+  private async initializeAsync(): Promise<void> {
+    try {
+      await this.initializeIndex();
+      await this.warmUpModels();
+      this.isInitialized = true;
+      this.logger.log('✅ Embeddings service fully initialized');
+    } catch (error) {
+      this.logger.error('❌ Failed to initialize embeddings service:', error);
+    }
   }
 
   async initializeIndex(): Promise<void> {
@@ -126,6 +171,135 @@ export class EmbeddingsService {
     throw new Error('Index creation timeout');
   }
 
+  private async warmUpModels(): Promise<void> {
+    this.logger.log('🔥 Warming up embedding models...');
+    const warmupText = "initialization test";
+
+    // Warm up models in parallel but with staggered timing to avoid rate limits
+    const warmupPromises = this.embeddingModels.map(async (model, index) => {
+      try {
+        // Stagger requests by 500ms each
+        await new Promise(resolve => setTimeout(resolve, index * 500));
+
+        const startTime = Date.now();
+        await this.hf.featureExtraction({
+          model: model,
+          inputs: warmupText
+        });
+        const duration = Date.now() - startTime;
+
+        const perf = this.modelPerformance.get(model)!;
+        perf.isWarmedUp = true;
+        perf.averageResponseTime = duration;
+        perf.successCount = 1;
+        perf.lastSuccessTime = Date.now();
+
+        this.logger.debug(`✅ Warmed up model: ${model} (${duration}ms)`);
+      } catch (error) {
+        this.logger.warn(`⚠️  Failed to warm up model ${model}: ${error.message}`);
+        const perf = this.modelPerformance.get(model)!;
+        perf.failureCount = 1;
+      }
+    });
+
+    await Promise.allSettled(warmupPromises);
+
+    const warmedCount = Array.from(this.modelPerformance.values())
+      .filter(p => p.isWarmedUp).length;
+
+    this.logger.log(`🔥 Warmed up ${warmedCount}/${this.embeddingModels.length} models`);
+  }
+
+  private getSortedModelsByPerformance(): string[] {
+    return this.embeddingModels.sort((a, b) => {
+      const perfA = this.modelPerformance.get(a)!;
+      const perfB = this.modelPerformance.get(b)!;
+
+      // Prioritize warmed up models
+      if (perfA.isWarmedUp && !perfB.isWarmedUp) return -1;
+      if (!perfA.isWarmedUp && perfB.isWarmedUp) return 1;
+
+      // Then by success rate
+      const successRateA = perfA.successCount / (perfA.successCount + perfA.failureCount + 1);
+      const successRateB = perfB.successCount / (perfB.successCount + perfB.failureCount + 1);
+
+      if (successRateA !== successRateB) {
+        return successRateB - successRateA;
+      }
+
+      // Then by average response time (lower is better)
+      return perfA.averageResponseTime - perfB.averageResponseTime;
+    });
+  }
+
+  private updateModelPerformance(model: string, duration: number, success: boolean): void {
+    const perf = this.modelPerformance.get(model)!;
+
+    if (success) {
+      perf.successCount++;
+      perf.lastSuccessTime = Date.now();
+      perf.isWarmedUp = true;
+
+      // Update average response time with weighted average
+      if (perf.averageResponseTime === 0) {
+        perf.averageResponseTime = duration;
+      } else {
+        perf.averageResponseTime = (perf.averageResponseTime * 0.7) + (duration * 0.3);
+      }
+    } else {
+      perf.failureCount++;
+    }
+  }
+
+  private getCachedEmbedding(text: string): number[] | null {
+    const cacheKey = this.generateCacheKey(text);
+    const cached = this.embeddingCache.get(cacheKey);
+
+    if (cached && Date.now() - cached.timestamp < 300000) { // 5 minutes cache
+      return cached.embedding;
+    }
+
+    return null;
+  }
+
+  private setCachedEmbedding(text: string, embedding: number[]): void {
+    const cacheKey = this.generateCacheKey(text);
+    this.embeddingCache.set(cacheKey, {
+      embedding,
+      timestamp: Date.now()
+    });
+
+    // Clean old cache entries periodically
+    if (this.embeddingCache.size > 1000) {
+      this.cleanCache();
+    }
+  }
+
+  private generateCacheKey(text: string): string {
+    // Simple hash for cache key
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+      const char = text.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return hash.toString();
+  }
+
+  private cleanCache(): void {
+    const now = Date.now();
+    const toDelete: string[] = [];
+
+    for (const [key, value] of this.embeddingCache.entries()) {
+      if (now - value.timestamp > 300000) { // Older than 5 minutes
+        toDelete.push(key);
+      }
+    }
+
+    toDelete.forEach(key => this.embeddingCache.delete(key));
+    this.logger.debug(`🧹 Cleaned ${toDelete.length} old cache entries`);
+  }
+
   async generateEmbedding(text: string): Promise<number[]> {
     if (!this.hf) {
       throw new Error('Hugging Face client not initialized');
@@ -133,69 +307,101 @@ export class EmbeddingsService {
 
     const cleanText = text.trim().substring(0, 8000);
 
-    // Try each model in sequence until one works
-    for (let i = 0; i < this.embeddingModels.length; i++) {
-      const model = this.embeddingModels[i];
+    // Check cache first
+    const cached = this.getCachedEmbedding(cleanText);
+    if (cached) {
+      this.logger.debug('📋 Using cached embedding');
+      return cached;
+    }
 
-      try {
-        this.logger.debug(`Attempting embedding generation with model ${i + 1}/${this.embeddingModels.length}: ${model}`);
+    // Get models sorted by performance
+    const sortedModels = this.getSortedModelsByPerformance();
 
-        // Add timeout to prevent hanging
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Embedding generation timeout after 30s')), 30000)
-        );
+    // Try each model with retry logic
+    for (let i = 0; i < sortedModels.length; i++) {
+      const model = sortedModels[i];
+      const maxRetries = i === 0 ? 2 : 1; // More retries for best model
 
-        const embeddingPromise = this.hf.featureExtraction({
-          model: model,
-          inputs: cleanText
-        });
+      for (let retry = 0; retry <= maxRetries; retry++) {
+        try {
+          this.logger.debug(`Attempting embedding with ${model} (attempt ${retry + 1}/${maxRetries + 1})`);
 
-        const response = await Promise.race([embeddingPromise, timeoutPromise]);
+          const startTime = Date.now();
 
-        // Handle different response formats
-        let embedding: number[];
-        if (Array.isArray(response)) {
-          if (Array.isArray(response[0])) {
-            embedding = response[0] as number[];
+          // Progressive timeout: first model gets longer timeout
+          const timeout = i === 0 ? 30000 : 15000;
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`Timeout after ${timeout / 1000}s`)), timeout)
+          );
+
+          const embeddingPromise = this.hf.featureExtraction({
+            model: model,
+            inputs: cleanText
+          });
+
+          const response = await Promise.race([embeddingPromise, timeoutPromise]);
+          const duration = Date.now() - startTime;
+
+          // Handle different response formats
+          let embedding: number[];
+          if (Array.isArray(response)) {
+            if (Array.isArray(response[0])) {
+              embedding = response[0] as number[];
+            } else {
+              embedding = response as number[];
+            }
           } else {
-            embedding = response as number[];
+            throw new Error('Unexpected embedding response format');
           }
-        } else {
-          throw new Error('Unexpected embedding response format');
+
+          if (!Array.isArray(embedding) || embedding.length === 0) {
+            throw new Error('Invalid embedding response');
+          }
+
+          // Verify dimension consistency
+          if (embedding.length !== this.embeddingDimension) {
+            throw new Error(`Model ${model} returned ${embedding.length}d vectors, expected ${this.embeddingDimension}d`);
+          }
+
+          // Update performance tracking
+          this.updateModelPerformance(model, duration, true);
+
+          // Cache the result
+          this.setCachedEmbedding(cleanText, embedding);
+
+          this.logger.debug(`✅ Generated embedding with ${model} in ${duration}ms`);
+
+          if (i > 0) {
+            this.logger.warn(`⚠️  Used fallback model ${i + 1}: ${model}`);
+          }
+
+          return embedding;
+
+        } catch (error) {
+          const duration = Date.now() - Date.now();
+          this.updateModelPerformance(model, duration, false);
+
+          this.logger.error(`❌ Model ${model} attempt ${retry + 1} failed: ${error.message}`);
+
+          if (retry === maxRetries) {
+            // This was the last retry for this model
+            if (i === sortedModels.length - 1) {
+              // This was the last model
+              this.logger.error('🚨 All embedding models failed!');
+              throw new Error(`All ${sortedModels.length} embedding models failed. Last error: ${error.message}`);
+            }
+            // Try next model
+            break;
+          }
+
+          // Wait before retry with exponential backoff
+          const waitTime = Math.min(1000 * Math.pow(2, retry), 5000);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
         }
-
-        if (!Array.isArray(embedding) || embedding.length === 0) {
-          throw new Error('Invalid embedding response');
-        }
-
-        // Verify dimension consistency with Pinecone index
-        if (embedding.length !== this.embeddingDimension) {
-          throw new Error(`Model ${model} returned ${embedding.length}d vectors, but Pinecone index expects ${this.embeddingDimension}d vectors`);
-        }
-
-        this.logger.debug(`✅ Successfully generated embedding with model: ${model} (dimension: ${embedding.length})`);
-
-        // If this is not the primary model, log the fallback usage
-        if (i > 0) {
-          this.logger.warn(`⚠️  Using fallback embedding model ${i + 1}: ${model}`);
-        }
-
-        return embedding;
-
-      } catch (error) {
-        this.logger.error(`❌ Model ${i + 1}/${this.embeddingModels.length} (${model}) failed:`, error.message);
-
-        // If this is the last model, throw the error
-        if (i === this.embeddingModels.length - 1) {
-          this.logger.error('🚨 All embedding models failed! Chat will continue but context search may be affected.');
-          throw new Error(`All ${this.embeddingModels.length} embedding models failed. Last error: ${error.message}`);
-        }
-
-        // Otherwise, continue to next model
-        this.logger.warn(`🔄 Trying next fallback model...`);
-        continue;
       }
     }
+
+    throw new Error('Unexpected error in embedding generation');
   }
 
   async storeMessageEmbedding(
@@ -423,21 +629,41 @@ export class EmbeddingsService {
     working: string[];
     failed: string[];
     recommended: string;
+    performance: Array<{ model: string; avgTime: number; successRate: number; isWarmedUp: boolean }>;
   }> {
     const working: string[] = [];
     const failed: string[] = [];
     const testText = "test embedding generation";
+    const performance: Array<{ model: string; avgTime: number; successRate: number; isWarmedUp: boolean }> = [];
 
     for (const model of this.embeddingModels) {
+      const perf = this.modelPerformance.get(model)!;
+      const successRate = perf.successCount / (perf.successCount + perf.failureCount + 1);
+
+      performance.push({
+        model,
+        avgTime: Math.round(perf.averageResponseTime),
+        successRate: Math.round(successRate * 100) / 100,
+        isWarmedUp: perf.isWarmedUp
+      });
+
       try {
-        await this.hf.featureExtraction({
-          model: model,
-          inputs: testText
-        });
+        const startTime = Date.now();
+        await Promise.race([
+          this.hf.featureExtraction({
+            model: model,
+            inputs: testText
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000))
+        ]);
+
+        const duration = Date.now() - startTime;
         working.push(model);
-        this.logger.debug(`✅ Model ${model} is working`);
+        this.updateModelPerformance(model, duration, true);
+        this.logger.debug(`✅ Model ${model} is working (${duration}ms)`);
       } catch (error) {
         failed.push(model);
+        this.updateModelPerformance(model, 0, false);
         this.logger.debug(`❌ Model ${model} failed: ${error.message}`);
       }
     }
@@ -447,8 +673,22 @@ export class EmbeddingsService {
     return {
       working,
       failed,
-      recommended: working.length > 0 ? working[0] : 'none available'
+      recommended: working.length > 0 ? this.getSortedModelsByPerformance()[0] : 'none available',
+      performance
     };
+  }
+
+  isReady(): boolean {
+    return this.isInitialized && !!this.pinecone && !!this.hf;
+  }
+
+  getModelPerformanceStats(): Array<{ model: string; avgTime: number; successRate: number; isWarmedUp: boolean }> {
+    return Array.from(this.modelPerformance.entries()).map(([model, perf]) => ({
+      model,
+      avgTime: Math.round(perf.averageResponseTime),
+      successRate: Math.round((perf.successCount / (perf.successCount + perf.failureCount + 1)) * 100) / 100,
+      isWarmedUp: perf.isWarmedUp
+    }));
   }
 
   isEnabled(): boolean {

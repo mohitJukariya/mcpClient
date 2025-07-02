@@ -195,19 +195,20 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
 
     const session = this.neo4jDriver.session();
     try {
-      // Create or update the node
+      // Create or update the node with sanitized properties
       const createNodeQuery = `
         MERGE (n:${contextNode.type.charAt(0).toUpperCase() + contextNode.type.slice(1)} {id: $id})
         SET n += $properties
         RETURN n
       `;
 
+      const sanitizedNodeProperties = this.sanitizePropertiesForNeo4j(contextNode.properties || {});
       await session.run(createNodeQuery, {
         id: contextNode.id,
-        properties: contextNode.properties
+        properties: sanitizedNodeProperties
       });
 
-      // Create relationships
+      // Create relationships with sanitized properties
       for (const rel of contextNode.relationships) {
         const createRelQuery = `
           MATCH (from {id: $fromId}), (to {id: $toId})
@@ -216,10 +217,11 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
           RETURN r
         `;
 
+        const sanitizedRelProperties = this.sanitizePropertiesForNeo4j(rel.properties || {});
         await session.run(createRelQuery, {
           fromId: rel.from,
           toId: rel.to,
-          properties: rel.properties
+          properties: sanitizedRelProperties
         });
       }
 
@@ -481,12 +483,14 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
     const session = this.neo4jDriver.session();
     try {
       const toolId = `tool-${toolName}`;
+      // Ensure toolArgs is properly serialized to a string for Neo4j property storage
+      const serializedArgs = typeof toolArgs === 'string' ? toolArgs : JSON.stringify(toolArgs || {});
 
       await session.run(`
         MATCH (q:Query {id: $queryId})
         MERGE (t:Tool {id: $toolId, name: $toolName})
-        CREATE (q)-[:USED_TOOL {arguments: $toolArgs, timestamp: datetime()}]->(t)
-      `, { queryId, toolId, toolName, toolArgs: JSON.stringify(toolArgs) });
+        CREATE (q)-[:USED_TOOL {arguments: $serializedArgs, timestamp: datetime()}]->(t)
+      `, { queryId, toolId, toolName, serializedArgs });
 
       this.logger.debug(`Created tool usage: ${queryId} -> ${toolName}`);
     } catch (error) {
@@ -691,20 +695,20 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
     const session: Session = this.neo4jDriver.session();
     try {
       this.logger.warn('🚨 CLEARING ENTIRE NEO4J DATABASE - This cannot be undone!');
-      
+
       // Get stats before clearing
       const statsResult = await session.run('MATCH (n) RETURN count(n) as nodeCount');
       const nodeCount = statsResult.records[0]?.get('nodeCount')?.toNumber() || 0;
-      
+
       const relResult = await session.run('MATCH ()-[r]->() RETURN count(r) as relCount');
       const relCount = relResult.records[0]?.get('relCount')?.toNumber() || 0;
 
       // Clear all relationships first
       await session.run('MATCH ()-[r]->() DELETE r');
-      
+
       // Clear all nodes
       await session.run('MATCH (n) DELETE n');
-      
+
       // Verify database is empty
       const verifyResult = await session.run('MATCH (n) RETURN count(n) as remaining');
       const remaining = verifyResult.records[0]?.get('remaining')?.toNumber() || 0;
@@ -713,8 +717,8 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
 
       if (remaining === 0) {
         this.logger.log(`✅ Successfully cleared Neo4j database - Removed ${nodeCount} nodes and ${relCount} relationships`);
-        return { 
-          success: true, 
+        return {
+          success: true,
           message: `Database cleared successfully. Removed ${nodeCount} nodes and ${relCount} relationships.`,
           stats: { nodesRemoved: nodeCount, relationshipsRemoved: relCount }
         };
@@ -722,7 +726,7 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`❌ Database clear incomplete - ${remaining} nodes remaining`);
         return { success: false, message: `Clear incomplete - ${remaining} nodes remaining` };
       }
-      
+
     } catch (error) {
       await session.close();
       this.logger.error('❌ Error clearing database:', error);
@@ -747,6 +751,40 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
       this.logger.error('❌ Error clearing Redis KV store:', error);
       return { success: false, message: `Error clearing Redis: ${error.message}` };
     }
+  }
+
+  /**
+   * Safely serialize properties for Neo4j storage
+   * Ensures only primitive types, arrays, or JSON strings are stored
+   */
+  private sanitizePropertiesForNeo4j(properties: Record<string, any>): Record<string, any> {
+    const sanitized: Record<string, any> = {};
+
+    for (const [key, value] of Object.entries(properties)) {
+      if (value === null || value === undefined) {
+        // Skip null/undefined values
+        continue;
+      } else if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        // Primitive types are safe
+        sanitized[key] = value;
+      } else if (Array.isArray(value)) {
+        // Arrays need to be checked - only arrays of primitives are allowed
+        const allPrimitive = value.every(item =>
+          typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean'
+        );
+        if (allPrimitive) {
+          sanitized[key] = value;
+        } else {
+          // Serialize complex arrays to JSON string
+          sanitized[key] = JSON.stringify(value);
+        }
+      } else {
+        // Complex objects need to be serialized to JSON string
+        sanitized[key] = JSON.stringify(value);
+      }
+    }
+
+    return sanitized;
   }
 
 }

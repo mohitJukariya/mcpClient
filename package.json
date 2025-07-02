@@ -28,6 +28,8 @@
     "test:production": "ts-node scripts/test-production-ready.ts",
     "test:block": "ts-node scripts/test-latest-block.ts",
     "test:enhanced": "ts-node scripts/test-enhanced-system.ts",
+    "test:neo4j-fix": "ts-node scripts/test-neo4j-fix.ts",
+    "test:comprehensive-neo4j": "ts-node scripts/test-comprehensive-neo4j.ts",
     "init:testdata": "ts-node scripts/initialize-test-data.ts",
     "find:models": "ts-node scripts/find-available-models.ts"
   },

@@ -2,6 +2,7 @@ import { Controller, Get, Post, Delete, Param, Query, Body } from '@nestjs/commo
 import { ContextUserService, TestUser, UserContextEntry } from './context-user.service';
 import { ContextStorageService } from './context-storage.service';
 import { ContextGraphService } from './context-graph.service';
+import { EmbeddingsService } from '../embeddings/embeddings.service';
 
 // Frontend-compatible interfaces
 interface FrontendContextData {
@@ -37,7 +38,8 @@ export class ContextController {
   constructor(
     private contextUserService: ContextUserService,
     private contextStorageService: ContextStorageService,
-    private contextGraphService: ContextGraphService
+    private contextGraphService: ContextGraphService,
+    private embeddingsService: EmbeddingsService
   ) { }
 
   @Get('users')
@@ -193,15 +195,77 @@ export class ContextController {
   async clearDatabase() {
     const neo4jResult = await this.contextStorageService.clearDatabase();
     const redisResult = await this.contextStorageService.clearRedisKV();
-    
+
     return {
       neo4j: neo4jResult,
       redis: redisResult,
       success: neo4jResult.success && redisResult.success,
-      message: neo4jResult.success && redisResult.success 
-        ? 'All databases cleared successfully' 
+      message: neo4jResult.success && redisResult.success
+        ? 'All databases cleared successfully'
         : 'Some databases failed to clear'
     };
+  }
+
+  @Get('health')
+  async getSystemHealth() {
+    const storageHealth = await this.contextStorageService.getStorageHealth();
+    const embeddingHealth = await this.embeddingsService.checkEmbeddingModelsHealth();
+    const embeddingPerformance = this.embeddingsService.getModelPerformanceStats();
+
+    return {
+      storage: storageHealth,
+      embeddings: {
+        ready: this.embeddingsService.isReady(),
+        models: embeddingHealth,
+        performance: embeddingPerformance
+      },
+      timestamp: new Date().toISOString(),
+      overall: storageHealth.redis !== 'down' &&
+        storageHealth.neo4j !== 'down' &&
+        storageHealth.pinecone !== 'down' &&
+        this.embeddingsService.isReady() ? 'healthy' : 'degraded'
+    };
+  }
+
+  @Get('health/embeddings')
+  async getEmbeddingHealth() {
+    const health = await this.embeddingsService.checkEmbeddingModelsHealth();
+    const performance = this.embeddingsService.getModelPerformanceStats();
+
+    return {
+      ready: this.embeddingsService.isReady(),
+      models: health,
+      performance,
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  @Post('health/embeddings/test')
+  async testEmbedding(@Body() body: { text?: string }) {
+    const testText = body.text || "This is a test embedding to check performance.";
+
+    try {
+      const startTime = Date.now();
+      const embedding = await this.embeddingsService.generateEmbedding(testText);
+      const duration = Date.now() - startTime;
+
+      return {
+        success: true,
+        text: testText,
+        dimension: embedding.length,
+        duration,
+        performance: duration < 5000 ? 'excellent' :
+          duration < 15000 ? 'good' :
+            duration < 30000 ? 'slow' : 'very_slow',
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      };
+    }
   }
 
 }
