@@ -292,7 +292,7 @@ export class ChatService implements OnModuleInit {
                         } else if (toolCall.name === 'getTransactionReceipt') {
                             followUpInstruction = `Transaction receipt data: ${JSON.stringify(toolResult)}. Show receipt details: status, gas used, block number, and any logs/events. Be concise. NO disclaimers.`;
                         } else if (toolCall.name === 'getGasPrice') {
-                            followUpInstruction = `Gas price data: ${JSON.stringify(toolResult)}. Show current gas price in Gwei and estimated cost implications. Be concise. NO disclaimers.`;
+                            followUpInstruction = `Gas price data: ${JSON.stringify(toolResult)}. Show current gas price in Gwei. For cost estimates, use: Cost = Gas Price × Gas Used × 0.000000001 × ETH Price. Example: 0.04 Gwei × 21,000 = 0.00084 ETH ≈ $2.94. Be accurate with calculations. NO disclaimers.`;
                         } else if (toolCall.name === 'getBlock') {
                             followUpInstruction = `Block data: ${JSON.stringify(toolResult)}. Show block details: number, timestamp, transaction count, gas used/limit, and hash. Be concise. NO disclaimers.`;
                         } else if (toolCall.name === 'getLatestBlock') {

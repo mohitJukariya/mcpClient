@@ -190,6 +190,13 @@ export class LlmService {
             prompt += '20. getContractCreation - Get contract creation details (Required: contractAddresses array)\n';
             prompt += '21. getAddressType - Check if address is contract or EOA (Required: address)\n\n';
 
+            prompt += 'CRITICAL GAS COST CALCULATION RULES:\n';
+            prompt += 'When showing gas cost estimates, ALWAYS use this formula:\n';
+            prompt += 'Cost = Gas Price (Gwei) × Gas Limit × 0.000000001 ETH/Gwei × ETH Price (USD)\n';
+            prompt += 'Example: 0.04 Gwei × 21,000 gas × 0.000000001 × $2,561 = $2.94\n';
+            prompt += 'NEVER multiply gas price directly by gas limit for USD - this gives wrong results!\n';
+            prompt += 'Standard gas limits: Transfer = 21,000, ERC-20 = 50,000-100,000, Complex contracts = 200,000+\n\n';
+
             prompt += ' You should always be ready to use any tool which is relevant to the task mentioned in the query from user. You can execute following tools to perform varoius operations on the arbitrum blockchain. Feel free to use any tool which is closest to the user intent. You just have to use the tool call. You can not respond with normal chat response unless explicitly asked. Also if there are multiple tools matching from user intent then use your intelligence to use one tool among them which is best suited.\n\n';
 
             prompt += 'MANDATORY RESPONSE FORMAT:\n';
