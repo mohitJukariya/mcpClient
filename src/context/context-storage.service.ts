@@ -678,4 +678,75 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
       throw error;
     }
   }
+
+  /**
+   * ⚠️ DANGER: Clears the entire Neo4j database
+   * Use only for testing or before submission
+   */
+  async clearDatabase(): Promise<{ success: boolean; message: string; stats?: any }> {
+    if (!this.neo4jDriver) {
+      return { success: false, message: 'Neo4j not initialized' };
+    }
+
+    const session: Session = this.neo4jDriver.session();
+    try {
+      this.logger.warn('🚨 CLEARING ENTIRE NEO4J DATABASE - This cannot be undone!');
+      
+      // Get stats before clearing
+      const statsResult = await session.run('MATCH (n) RETURN count(n) as nodeCount');
+      const nodeCount = statsResult.records[0]?.get('nodeCount')?.toNumber() || 0;
+      
+      const relResult = await session.run('MATCH ()-[r]->() RETURN count(r) as relCount');
+      const relCount = relResult.records[0]?.get('relCount')?.toNumber() || 0;
+
+      // Clear all relationships first
+      await session.run('MATCH ()-[r]->() DELETE r');
+      
+      // Clear all nodes
+      await session.run('MATCH (n) DELETE n');
+      
+      // Verify database is empty
+      const verifyResult = await session.run('MATCH (n) RETURN count(n) as remaining');
+      const remaining = verifyResult.records[0]?.get('remaining')?.toNumber() || 0;
+
+      await session.close();
+
+      if (remaining === 0) {
+        this.logger.log(`✅ Successfully cleared Neo4j database - Removed ${nodeCount} nodes and ${relCount} relationships`);
+        return { 
+          success: true, 
+          message: `Database cleared successfully. Removed ${nodeCount} nodes and ${relCount} relationships.`,
+          stats: { nodesRemoved: nodeCount, relationshipsRemoved: relCount }
+        };
+      } else {
+        this.logger.error(`❌ Database clear incomplete - ${remaining} nodes remaining`);
+        return { success: false, message: `Clear incomplete - ${remaining} nodes remaining` };
+      }
+      
+    } catch (error) {
+      await session.close();
+      this.logger.error('❌ Error clearing database:', error);
+      return { success: false, message: `Error clearing database: ${error.message}` };
+    }
+  }
+
+  /**
+   * Clear Redis KV store
+   */
+  async clearRedisKV(): Promise<{ success: boolean; message: string }> {
+    if (!this.redis) {
+      return { success: false, message: 'Redis not initialized' };
+    }
+
+    try {
+      this.logger.warn('🚨 CLEARING REDIS KV STORE');
+      await this.redis.flushdb();
+      this.logger.log('✅ Successfully cleared Redis KV store');
+      return { success: true, message: 'Redis KV store cleared successfully' };
+    } catch (error) {
+      this.logger.error('❌ Error clearing Redis KV store:', error);
+      return { success: false, message: `Error clearing Redis: ${error.message}` };
+    }
+  }
+
 }

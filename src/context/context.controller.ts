@@ -188,4 +188,20 @@ export class ContextController {
     const results = await this.contextStorageService.searchVector(query, userId);
     return { query, results, count: results.length };
   }
+
+  @Delete('database/clear')
+  async clearDatabase() {
+    const neo4jResult = await this.contextStorageService.clearDatabase();
+    const redisResult = await this.contextStorageService.clearRedisKV();
+    
+    return {
+      neo4j: neo4jResult,
+      redis: redisResult,
+      success: neo4jResult.success && redisResult.success,
+      message: neo4jResult.success && redisResult.success 
+        ? 'All databases cleared successfully' 
+        : 'Some databases failed to clear'
+    };
+  }
+
 }
