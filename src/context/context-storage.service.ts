@@ -430,6 +430,11 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
 
   // Graph-specific methods for creating context relationships
   async createUserNode(userId: string, userName: string = 'Unknown'): Promise<void> {
+    if (!this.neo4jDriver) {
+      this.logger.debug(`Neo4j not available, skipping user node creation: ${userId}`);
+      return;
+    }
+
     const session = this.neo4jDriver.session();
     try {
       await session.run(`
@@ -446,6 +451,11 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
   }
 
   async createQueryNode(queryId: string, content: string, userId: string): Promise<void> {
+    if (!this.neo4jDriver) {
+      this.logger.debug(`Neo4j not available, skipping query node creation: ${queryId}`);
+      return;
+    }
+
     const session = this.neo4jDriver.session();
     try {
       await session.run(`
@@ -463,6 +473,11 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
   }
 
   async createToolUsageRelationship(queryId: string, toolName: string, toolArgs: any): Promise<void> {
+    if (!this.neo4jDriver) {
+      this.logger.debug(`Neo4j not available, skipping tool usage relationship: ${queryId} -> ${toolName}`);
+      return;
+    }
+
     const session = this.neo4jDriver.session();
     try {
       const toolId = `tool-${toolName}`;
@@ -482,6 +497,11 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
   }
 
   async createInsightNode(queryId: string, insight: string, confidence: number = 0.8): Promise<void> {
+    if (!this.neo4jDriver) {
+      this.logger.debug(`Neo4j not available, skipping insight creation: ${queryId}`);
+      return;
+    }
+
     const session = this.neo4jDriver.session();
     try {
       const insightId = `insight-${queryId}-${Date.now()}`;
@@ -501,6 +521,11 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
   }
 
   async createAddressInvolvement(queryId: string, address: string, addressType: string = 'unknown'): Promise<void> {
+    if (!this.neo4jDriver) {
+      this.logger.debug(`Neo4j not available, skipping address involvement: ${queryId} -> ${address}`);
+      return;
+    }
+
     const session = this.neo4jDriver.session();
     try {
       const addressId = `addr-${address}`;
@@ -573,6 +598,84 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
     }
     if (this.neo4jDriver) {
       await this.neo4jDriver.close();
+    }
+  }
+
+  // Additional methods for frontend context storage
+  async storeInsight(contextId: string, content: string, confidence: number): Promise<string> {
+    try {
+      const insightId = `insight-${contextId}-${Date.now()}`;
+      const session = this.neo4jDriver.session();
+
+      await session.run(
+        `
+        MATCH (q:Query {id: $contextId})
+        CREATE (i:Insight {
+          id: $insightId,
+          content: $content,
+          confidence: $confidence,
+          timestamp: datetime()
+        })
+        CREATE (q)-[:GENERATED_INSIGHT]->(i)
+        RETURN i
+        `,
+        { contextId, insightId, content, confidence }
+      );
+
+      await session.close();
+      this.logger.log(`Stored insight: ${insightId}`);
+      return insightId;
+    } catch (error) {
+      this.logger.error('Failed to store insight:', error);
+      throw error;
+    }
+  }
+
+  async storeToolUsage(contextId: string, toolName: string): Promise<string> {
+    try {
+      const toolId = `tool-${toolName}`;
+      const session = this.neo4jDriver.session();
+
+      await session.run(
+        `
+        MATCH (q:Query {id: $contextId})
+        MERGE (t:Tool {id: $toolId, name: $toolName})
+        CREATE (q)-[:USED_TOOL]->(t)
+        RETURN t
+        `,
+        { contextId, toolId, toolName }
+      );
+
+      await session.close();
+      this.logger.log(`Stored tool usage: ${toolName} for context ${contextId}`);
+      return toolId;
+    } catch (error) {
+      this.logger.error('Failed to store tool usage:', error);
+      throw error;
+    }
+  }
+
+  async storeAddressRelationship(contextId: string, address: string): Promise<string> {
+    try {
+      const addressId = `addr-${address}`;
+      const session = this.neo4jDriver.session();
+
+      await session.run(
+        `
+        MATCH (q:Query {id: $contextId})
+        MERGE (a:Address {id: $addressId, address: $address, type: 'user_query'})
+        CREATE (q)-[:INVOLVES_ADDRESS]->(a)
+        RETURN a
+        `,
+        { contextId, addressId, address }
+      );
+
+      await session.close();
+      this.logger.log(`Stored address relationship: ${address} for context ${contextId}`);
+      return addressId;
+    } catch (error) {
+      this.logger.error('Failed to store address relationship:', error);
+      throw error;
     }
   }
 }

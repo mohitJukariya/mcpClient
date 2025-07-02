@@ -3,6 +3,35 @@ import { ContextUserService, TestUser, UserContextEntry } from './context-user.s
 import { ContextStorageService } from './context-storage.service';
 import { ContextGraphService } from './context-graph.service';
 
+// Frontend-compatible interfaces
+interface FrontendContextData {
+  query: string;
+  toolsUsed?: string[];
+  addressesInvolved?: string[];
+  insights?: Array<{
+    content: string;
+    confidence: number;
+  }>;
+  metadata?: {
+    sessionId?: string;
+    timestamp?: string;
+    confidence?: number;
+    personality?: string;
+  };
+}
+
+interface FrontendContextResponse {
+  success: boolean;
+  contextId: string;
+  message: string;
+  stored?: {
+    query: boolean;
+    tools: boolean;
+    addresses: boolean;
+    insights: boolean;
+  };
+}
+
 @Controller('context')
 export class ContextController {
   constructor(
@@ -24,17 +53,84 @@ export class ContextController {
   @Post('users/:userId/context')
   async addUserContext(
     @Param('userId') userId: string,
-    @Body() contextEntry: UserContextEntry
-  ): Promise<{ success: boolean; storedContext: any }> {
-    const user = await this.contextUserService.getUserById(userId);
-    if (!user) {
-      return { success: false, storedContext: null };
+    @Body() frontendContextData: FrontendContextData
+  ): Promise<FrontendContextResponse> {
+    try {
+      // Generate unique context ID
+      const contextId = `ctx-${userId}-${Date.now()}`;
+
+      // Convert frontend format to backend format
+      const contextEntry: UserContextEntry = {
+        id: contextId,
+        userId: userId,
+        type: 'query',
+        content: frontendContextData.query,
+        metadata: {
+          timestamp: frontendContextData.metadata?.timestamp || new Date().toISOString(),
+          toolsUsed: frontendContextData.toolsUsed || [],
+          confidence: frontendContextData.metadata?.confidence || 0.8,
+          relatedEntries: [],
+          sessionId: frontendContextData.metadata?.sessionId,
+          personality: frontendContextData.metadata?.personality,
+          addressesInvolved: frontendContextData.addressesInvolved || [],
+          insights: frontendContextData.insights || []
+        }
+      };
+
+      // Ensure user exists (get or create)
+      let user = await this.contextUserService.getUserById(userId);
+      if (!user) {
+        // Create user if doesn't exist
+        user = await this.contextUserService.createUser(userId, frontendContextData.metadata?.personality);
+      }
+
+      // Store context in graph database
+      const storedContext = await this.contextStorageService.storeUserContext(user, contextEntry);
+
+      // Add to user's context history
+      await this.contextUserService.addContextEntry(userId, contextEntry);
+
+      // Store insights if provided
+      if (frontendContextData.insights && frontendContextData.insights.length > 0) {
+        for (const insight of frontendContextData.insights) {
+          await this.contextStorageService.storeInsight(contextId, insight.content, insight.confidence);
+        }
+      }
+
+      // Store tool usage relationships
+      if (frontendContextData.toolsUsed && frontendContextData.toolsUsed.length > 0) {
+        for (const toolName of frontendContextData.toolsUsed) {
+          await this.contextStorageService.storeToolUsage(contextId, toolName);
+        }
+      }
+
+      // Store address relationships
+      if (frontendContextData.addressesInvolved && frontendContextData.addressesInvolved.length > 0) {
+        for (const address of frontendContextData.addressesInvolved) {
+          await this.contextStorageService.storeAddressRelationship(contextId, address);
+        }
+      }
+
+      return {
+        success: true,
+        contextId: contextId,
+        message: 'Context stored successfully',
+        stored: {
+          query: true,
+          tools: (frontendContextData.toolsUsed?.length || 0) > 0,
+          addresses: (frontendContextData.addressesInvolved?.length || 0) > 0,
+          insights: (frontendContextData.insights?.length || 0) > 0
+        }
+      };
+
+    } catch (error) {
+      console.error('Error storing context:', error);
+      return {
+        success: false,
+        contextId: '',
+        message: `Failed to store context: ${error.message}`
+      };
     }
-
-    const storedContext = await this.contextStorageService.storeUserContext(user, contextEntry);
-    await this.contextUserService.addContextEntry(userId, contextEntry);
-
-    return { success: true, storedContext };
   }
 
   @Get('graph/visualization')

@@ -6,6 +6,7 @@ import { EmbeddingsService } from '../embeddings/embeddings.service';
 import { FailsafeQAService } from '../failsafe/failsafe-qa.service';
 import { ContextStorageService } from '../context/context-storage.service';
 import { ContextUserService } from '../context/context-user.service';
+import { KVCacheService } from '../cache/kv-cache.service';
 import { ChatResponseDto } from './dto/chat.dto';
 
 interface ChatSession {
@@ -29,6 +30,7 @@ export class ChatService implements OnModuleInit {
         private readonly failsafeService: FailsafeQAService,
         private readonly contextStorage: ContextStorageService,
         private readonly contextUserService: ContextUserService,
+        private readonly kvCacheService: KVCacheService,
     ) { }
 
     async onModuleInit() {
@@ -55,6 +57,7 @@ export class ChatService implements OnModuleInit {
 
             // Store embedding for user message
             const userMessageIndex = session.messageCount;
+            console.log(`Processing user message index: ${userMessageIndex}`);
             try {
                 await this.embeddingsService.storeMessageEmbedding(
                     actualSessionId,
@@ -97,6 +100,19 @@ export class ChatService implements OnModuleInit {
                 } catch (contextError) {
                     this.logger.warn(`Failed to store user context: ${contextError.message}`);
                 }
+            } else {
+                // 🔄 CRITICAL: Create graph context even for anonymous users
+                try {
+                    const anonymousUserId = `anonymous-${actualSessionId}`;
+                    await this.contextStorage.createUserNode(anonymousUserId, 'Anonymous User');
+
+                    currentQueryId = `query-${anonymousUserId}-${Date.now()}`;
+                    await this.contextStorage.createQueryNode(currentQueryId, message, anonymousUserId);
+
+                    this.logger.debug(`Created anonymous context for session: ${actualSessionId}`);
+                } catch (contextError) {
+                    this.logger.warn(`Failed to create anonymous context: ${contextError.message}`);
+                }
             }
 
             // Fetch relevant context from previous conversations
@@ -135,6 +151,19 @@ export class ChatService implements OnModuleInit {
 
             this.logger.log(`Processing message with ${tools.length} available tools`);
 
+            // Initialize KV cache for new conversations
+            if (session.messageCount === 0) {
+                await this.llmService.initializeConversationCache(
+                    actualSessionId,
+                    userId || 'anonymous',
+                    personalityId || 'default',
+                    message
+                );
+            } else {
+                // Update cache with new query
+                await this.kvCacheService.updateConversationWithNewQuery(actualSessionId, message);
+            }
+
             // Prepare messages for LLM with context if available
             let messagesForLLM = [...session.messages];
             if (contextMessages.length > 0) {
@@ -151,11 +180,14 @@ export class ChatService implements OnModuleInit {
                 ];
             }
 
-            // Generate initial response from LLM with personality
-            const llmResponse = await this.llmService.generateResponse(
+            // 🚀 Use KV Cache Optimized Generation
+            const isFirstMessage = session.messageCount === 0;
+            const llmResponse = await this.llmService.generateResponseWithCache(
                 messagesForLLM,
                 tools,
-                personalityId
+                personalityId,
+                actualSessionId, // Pass conversation ID for caching
+                isFirstMessage   // CRITICAL: Flag first message to use full system prompt
             );
 
             console.log("initial response", llmResponse);
@@ -169,7 +201,32 @@ export class ChatService implements OnModuleInit {
                     try {
                         this.logger.log(`Calling tool: ${toolCall.name}`, toolCall.arguments);
 
-                        const toolResult = await this.mcpService.callTool(toolCall.name, toolCall.arguments);
+                        // 🔧 Check KV cache for tool result first
+                        let toolResult = await this.llmService.getCachedToolResult(
+                            toolCall.name,
+                            toolCall.arguments
+                        );
+
+                        if (toolResult) {
+                            this.logger.log(`🎯 Using cached result for ${toolCall.name}`);
+                        } else {
+                            // Call tool if not cached
+                            toolResult = await this.mcpService.callTool(toolCall.name, toolCall.arguments);                        // 📝 Update KV cache with tool result
+                            await this.llmService.updateCacheWithToolResult(
+                                actualSessionId,
+                                toolCall.name,
+                                toolCall.arguments,
+                                toolResult
+                            );
+
+                            // 🔄 CRITICAL: Update conversation cache with tool usage
+                            await this.kvCacheService.updateConversationWithToolUsage(
+                                actualSessionId,
+                                toolCall.name,
+                                toolCall.arguments,
+                                toolResult
+                            );
+                        }
 
                         console.log("tool result", toolResult);
 
@@ -179,8 +236,8 @@ export class ChatService implements OnModuleInit {
                             result: toolResult,
                         });
 
-                        // Create graph relationships for tool usage
-                        if (userId && currentQueryId) {
+                        // 🔄 Create graph relationships for tool usage (works for both authenticated and anonymous)
+                        if (currentQueryId) {
                             try {
                                 // Create tool usage relationship
                                 await this.contextStorage.createToolUsageRelationship(
@@ -203,6 +260,8 @@ export class ChatService implements OnModuleInit {
                                 if (insightContent) {
                                     await this.contextStorage.createInsightNode(currentQueryId, insightContent, 0.8);
                                 }
+
+                                this.logger.debug(`Updated graph context for query: ${currentQueryId}`);
                             } catch (graphError) {
                                 this.logger.warn(`Failed to create graph relationships: ${graphError.message}`);
                             }
@@ -264,7 +323,7 @@ export class ChatService implements OnModuleInit {
                             },
                         ];
 
-                        const followUpResponse = await this.llmService.generateResponse(followUpMessages, [], personalityId);
+                        const followUpResponse = await this.llmService.generateResponse(followUpMessages, [], personalityId, actualSessionId);
                         finalResponse = this.convertHexToDecimal(followUpResponse.content);
 
                         console.log("final follow up response after tool call", finalResponse);
@@ -305,6 +364,19 @@ export class ChatService implements OnModuleInit {
             // Update session activity and message count
             session.lastActivity = new Date();
             session.messageCount += 2; // User message + assistant message
+
+            // 📊 CRITICAL: Final KV Cache update with conversation summary
+            try {
+                if (toolsUsed.length > 0) {
+                    // Update conversation cache with final context after all tools
+                    const toolNames = toolsUsed.map(t => t.name);
+
+                    this.logger.debug(`Finalizing conversation cache with ${toolsUsed.length} tools used`);
+                    this.logger.debug(`Session ${actualSessionId} used tools: ${toolNames.join(', ')}`);
+                }
+            } catch (cacheError) {
+                this.logger.warn(`Failed to finalize conversation cache: ${cacheError.message}`);
+            }
 
             // Keep session manageable (last 10 messages)
             if (session.messages.length > 10) {

@@ -34,7 +34,7 @@ export class EmbeddingsService {
   private pinecone: Pinecone;
   private hf: InferenceClient;
   private indexName: string;
-  private embeddingModel: string;
+  private embeddingModels: string[];
   private embeddingDimension: number;
 
   constructor(private configService: ConfigService) {
@@ -57,10 +57,16 @@ export class EmbeddingsService {
 
     this.hf = new InferenceClient(hfApiKey);
     this.indexName = this.configService.get<string>('PINECONE_INDEX_NAME') || 'arbitrum-chat-embeddings';
-    this.embeddingModel = this.configService.get<string>('EMBEDDING_MODEL') || 'sentence-transformers/all-MiniLM-L6-v2';
+
+    // Multiple embedding models as fallbacks - ALL 384 dimensions for compatibility
+    this.embeddingModels = [
+      'sentence-transformers/multi-qa-MiniLM-L6-cos-v1',     // Primary (384d) - Working ✅
+      'sentence-transformers/all-MiniLM-L6-v2', // Fallback 1 (384d) - Compatible ✅
+    ];
+
     this.embeddingDimension = parseInt(this.configService.get<string>('EMBEDDING_DIMENSION') || '384');
 
-    this.logger.log(`Initialized Embeddings Service with model: ${this.embeddingModel}`);
+    this.logger.log(`Initialized Embeddings Service with ${this.embeddingModels.length} fallback models`);
   }
 
   async initializeIndex(): Promise<void> {
@@ -125,38 +131,70 @@ export class EmbeddingsService {
       throw new Error('Hugging Face client not initialized');
     }
 
-    try {
-      this.logger.debug(`Generating embedding for text (${text.length} chars)`);
+    const cleanText = text.trim().substring(0, 8000);
 
-      // Clean and truncate text if too long
-      const cleanText = text.trim().substring(0, 8000); // Most embedding models have token limits
+    // Try each model in sequence until one works
+    for (let i = 0; i < this.embeddingModels.length; i++) {
+      const model = this.embeddingModels[i];
 
-      const response = await this.hf.featureExtraction({
-        model: this.embeddingModel,
-        inputs: cleanText
-      });
+      try {
+        this.logger.debug(`Attempting embedding generation with model ${i + 1}/${this.embeddingModels.length}: ${model}`);
 
-      // Handle different response formats
-      let embedding: number[];
-      if (Array.isArray(response)) {
-        if (Array.isArray(response[0])) {
-          embedding = response[0] as number[];
+        // Add timeout to prevent hanging
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Embedding generation timeout after 30s')), 30000)
+        );
+
+        const embeddingPromise = this.hf.featureExtraction({
+          model: model,
+          inputs: cleanText
+        });
+
+        const response = await Promise.race([embeddingPromise, timeoutPromise]);
+
+        // Handle different response formats
+        let embedding: number[];
+        if (Array.isArray(response)) {
+          if (Array.isArray(response[0])) {
+            embedding = response[0] as number[];
+          } else {
+            embedding = response as number[];
+          }
         } else {
-          embedding = response as number[];
+          throw new Error('Unexpected embedding response format');
         }
-      } else {
-        throw new Error('Unexpected embedding response format');
-      }
 
-      if (!Array.isArray(embedding) || embedding.length === 0) {
-        throw new Error('Invalid embedding response');
-      }
+        if (!Array.isArray(embedding) || embedding.length === 0) {
+          throw new Error('Invalid embedding response');
+        }
 
-      this.logger.debug(`Generated embedding with dimension: ${embedding.length}`);
-      return embedding;
-    } catch (error) {
-      this.logger.error('Error generating embedding:', error);
-      throw error;
+        // Verify dimension consistency with Pinecone index
+        if (embedding.length !== this.embeddingDimension) {
+          throw new Error(`Model ${model} returned ${embedding.length}d vectors, but Pinecone index expects ${this.embeddingDimension}d vectors`);
+        }
+
+        this.logger.debug(`✅ Successfully generated embedding with model: ${model} (dimension: ${embedding.length})`);
+
+        // If this is not the primary model, log the fallback usage
+        if (i > 0) {
+          this.logger.warn(`⚠️  Using fallback embedding model ${i + 1}: ${model}`);
+        }
+
+        return embedding;
+
+      } catch (error) {
+        this.logger.error(`❌ Model ${i + 1}/${this.embeddingModels.length} (${model}) failed:`, error.message);
+
+        // If this is the last model, throw the error
+        if (i === this.embeddingModels.length - 1) {
+          this.logger.error('🚨 All embedding models failed! Chat will continue but context search may be affected.');
+          throw new Error(`All ${this.embeddingModels.length} embedding models failed. Last error: ${error.message}`);
+        }
+
+        // Otherwise, continue to next model
+        this.logger.warn(`🔄 Trying next fallback model...`);
+        continue;
+      }
     }
   }
 
@@ -205,11 +243,14 @@ export class EmbeddingsService {
         }
       }]);
 
-      this.logger.log(`Stored embedding for ${messageType} message: ${recordId}`);
+      this.logger.log(`✅ Stored embedding for ${messageType} message: ${recordId}`);
       return recordId;
     } catch (error) {
-      this.logger.error('Error storing message embedding:', error);
-      throw error;
+      this.logger.error('❌ Error storing message embedding:', error);
+
+      // Don't throw - let chat continue even if embeddings fail
+      this.logger.warn('⚠️  Embedding storage failed, but chat will continue normally');
+      return 'failed';
     }
   }
 
@@ -375,6 +416,39 @@ export class EmbeddingsService {
     }
 
     return context.trim();
+  }
+
+  // Add method to check embedding model health
+  async checkEmbeddingModelsHealth(): Promise<{
+    working: string[];
+    failed: string[];
+    recommended: string;
+  }> {
+    const working: string[] = [];
+    const failed: string[] = [];
+    const testText = "test embedding generation";
+
+    for (const model of this.embeddingModels) {
+      try {
+        await this.hf.featureExtraction({
+          model: model,
+          inputs: testText
+        });
+        working.push(model);
+        this.logger.debug(`✅ Model ${model} is working`);
+      } catch (error) {
+        failed.push(model);
+        this.logger.debug(`❌ Model ${model} failed: ${error.message}`);
+      }
+    }
+
+    this.logger.log(`Embedding models health check: ${working.length}/${this.embeddingModels.length} working`);
+
+    return {
+      working,
+      failed,
+      recommended: working.length > 0 ? working[0] : 'none available'
+    };
   }
 
   isEnabled(): boolean {

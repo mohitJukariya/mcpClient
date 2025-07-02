@@ -25,6 +25,13 @@ export interface UserContextEntry {
     toolsUsed: string[];
     confidence: number;
     relatedEntries: string[];
+    sessionId?: string;
+    personality?: string;
+    addressesInvolved?: string[];
+    insights?: Array<{
+      content: string;
+      confidence: number;
+    }>;
   };
 }
 
@@ -205,6 +212,42 @@ export class ContextUserService {
   async getUserById(userId: string): Promise<TestUser | null> {
     const users = await this.initializeTestUsers();
     return users.find(user => user.id === userId) || null;
+  }
+
+  async createUser(userId: string, personality?: string): Promise<TestUser> {
+    // Map personality to role and name
+    const getUserDetails = (id: string, personality?: string) => {
+      switch (personality || id) {
+        case 'alice':
+          return { name: 'Alice (Trader)', role: 'trader' as const };
+        case 'bob':
+          return { name: 'Bob (Developer)', role: 'developer' as const };
+        case 'charlie':
+          return { name: 'Charlie (Analyst)', role: 'analyst' as const };
+        default:
+          return { name: `User ${id}`, role: 'trader' as const };
+      }
+    };
+
+    const details = getUserDetails(userId, personality);
+
+    const newUser: TestUser = {
+      id: userId,
+      name: details.name,
+      role: details.role,
+      preferences: {
+        defaultTokens: ['ETH', 'USDC', 'ARB'],
+        favoriteAddresses: [],
+        alertThresholds: {
+          gasPrice: 0.1,
+          balanceChange: 1000
+        }
+      },
+      contextHistory: []
+    };
+
+    this.logger.log(`Created new user: ${userId} (${details.name})`);
+    return newUser;
   }
 
   async getAllUsers(): Promise<TestUser[]> {

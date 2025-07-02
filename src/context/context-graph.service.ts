@@ -60,7 +60,7 @@ export class ContextGraphService {
         // Get user-specific context relationships
         const userContextQuery = `
           MATCH (u:User {id: $userId})
-          OPTIONAL MATCH (u)-[:HAS_QUERY]->(q:Query)
+          OPTIONAL MATCH (u)-[:QUERIES]->(q:Query)
           OPTIONAL MATCH (q)-[:USED_TOOL]->(t:Tool)
           OPTIONAL MATCH (q)-[:GENERATED_INSIGHT]->(i:Insight)
           OPTIONAL MATCH (q)-[:INVOLVES_ADDRESS]->(a:Address)
@@ -73,14 +73,28 @@ export class ContextGraphService {
         const queryResult = await this.contextStorage.queryGraph(userContextQuery, { userId });
         graphData = this.convertUserContextToGraphData(queryResult, userId);
       } else {
-        // Get global context patterns across all users
+        // Get global context patterns across all users AND standalone queries with relationships
         const globalContextQuery = `
-          MATCH (u:User)-[:HAS_QUERY]->(q:Query)
+          // Get user-connected queries
+          MATCH (u:User)-[:QUERIES]->(q:Query)
           OPTIONAL MATCH (q)-[:USED_TOOL]->(t:Tool)
           OPTIONAL MATCH (q)-[:GENERATED_INSIGHT]->(i:Insight)
           OPTIONAL MATCH (q)-[:INVOLVES_ADDRESS]->(a:Address)
           OPTIONAL MATCH (q)-[:RELATED_TO]->(other:Query)
           RETURN u, q, t, i, a, other
+          
+          UNION
+          
+          // Get queries with tool/insight/address relationships (even if not connected to users)
+          MATCH (q:Query)
+          WHERE (q)-[:USED_TOOL]->() OR (q)-[:GENERATED_INSIGHT]->() OR (q)-[:INVOLVES_ADDRESS]->()
+          OPTIONAL MATCH (q)-[:USED_TOOL]->(t:Tool)
+          OPTIONAL MATCH (q)-[:GENERATED_INSIGHT]->(i:Insight)
+          OPTIONAL MATCH (q)-[:INVOLVES_ADDRESS]->(a:Address)
+          OPTIONAL MATCH (q)-[:RELATED_TO]->(other:Query)
+          OPTIONAL MATCH (u:User)-[:QUERIES]->(q)
+          RETURN u, q, t, i, a, other
+          
           LIMIT 500
         `;
 
@@ -169,7 +183,10 @@ export class ContextGraphService {
   }
 
   async getContextInsights(userId: string): Promise<{
-    userProfile: any;
+    userProfile: {
+      experience: string;
+      focus: string;
+    };
     topTools: Array<{ tool: string; usage: number }>;
     relationshipStrength: Array<{ target: string; strength: number }>;
     recommendations: string[];
@@ -177,7 +194,7 @@ export class ContextGraphService {
     try {
       // Get user's context patterns and tool usage from actual context relationships
       const contextPatternsQuery = `
-        MATCH (u:User {id: $userId})-[:HAS_QUERY]->(q:Query)-[:USED_TOOL]->(t:Tool)
+        MATCH (u:User {id: $userId})-[:QUERIES]->(q:Query)-[:USED_TOOL]->(t:Tool)
         RETURN t.name as tool, count(q) as usage, collect(q.content)[0..3] as recentQueries
         ORDER BY usage DESC
         LIMIT 10
@@ -187,7 +204,7 @@ export class ContextGraphService {
 
       // Get address interaction patterns
       const addressPatternsQuery = `
-        MATCH (u:User {id: $userId})-[:HAS_QUERY]->(q:Query)-[:INVOLVES_ADDRESS]->(a:Address)
+        MATCH (u:User {id: $userId})-[:QUERIES]->(q:Query)-[:INVOLVES_ADDRESS]->(a:Address)
         RETURN a.address as address, a.type as addressType, count(q) as interactions
         ORDER BY interactions DESC
         LIMIT 10
@@ -197,7 +214,7 @@ export class ContextGraphService {
 
       // Get learning patterns
       const learningPatternsQuery = `
-        MATCH (u:User {id: $userId})-[:HAS_QUERY]->(q:Query)-[:GENERATED_INSIGHT]->(i:Insight)
+        MATCH (u:User {id: $userId})-[:QUERIES]->(q:Query)-[:GENERATED_INSIGHT]->(i:Insight)
         RETURN i.content as insight, i.confidence as confidence, q.content as triggerQuery
         ORDER BY i.confidence DESC
         LIMIT 5
@@ -205,40 +222,54 @@ export class ContextGraphService {
 
       const learningPatterns = await this.contextStorage.queryGraph(learningPatternsQuery, { userId });
 
-      // Get query relationships (how queries relate to each other)
-      const queryRelationshipsQuery = `
-        MATCH (u:User {id: $userId})-[:HAS_QUERY]->(q1:Query)-[:RELATED_TO]->(q2:Query)
-        RETURN q1.content as query1, q2.content as query2, count(*) as strength
+      // Get user relationships (interactions with other users or entities)
+      const relationshipQuery = `
+        MATCH (u:User {id: $userId})
+        OPTIONAL MATCH (u)-[r]-(other:User)
+        WHERE other.id <> $userId
+        RETURN other.id as target, count(r) as strength
         ORDER BY strength DESC
-        LIMIT 10
+        LIMIT 5
       `;
 
-      const queryRelationships = await this.contextStorage.queryGraph(queryRelationshipsQuery, { userId });
+      const relationships = await this.contextStorage.queryGraph(relationshipQuery, { userId });
+
+      // Determine user experience and focus based on activity patterns
+      const totalQueries = toolUsage.reduce((sum, t) => sum + this.convertToNumber(t.usage), 0);
+      const experience = totalQueries > 50 ? 'advanced' : totalQueries > 20 ? 'intermediate' : 'beginner';
+
+      // Determine focus based on most used tool categories
+      let focus = 'general';
+      const topTool = toolUsage[0]?.tool || '';
+      if (topTool.includes('gas') || topTool.includes('Gas') || topTool.includes('price')) {
+        focus = 'trading';
+      } else if (topTool.includes('contract') || topTool.includes('Contract')) {
+        focus = 'development';
+      } else if (topTool.includes('transaction') || topTool.includes('Transaction')) {
+        focus = 'analysis';
+      }
 
       // Generate context-aware recommendations
       const recommendations = this.generateContextRecommendations(toolUsage, addressPatterns, learningPatterns);
 
       return {
         userProfile: {
-          userId,
-          totalQueries: toolUsage.reduce((sum, t) => sum + t.usage, 0),
-          uniqueToolsUsed: toolUsage.length,
-          addressesInteracted: addressPatterns.length,
-          insightsGenerated: learningPatterns.length,
-          topToolCategories: this.categorizeTools(toolUsage),
-          learningScore: this.calculateLearningScore(learningPatterns)
+          experience,
+          focus
         },
         topTools: toolUsage.map(t => ({
-          tool: t.tool,
-          usage: t.usage,
-          recentQueries: t.recentQueries
+          tool: t.tool || 'Unknown Tool',
+          usage: this.convertToNumber(t.usage) || 0
         })),
-        relationshipStrength: queryRelationships.map(r => ({
-          target: r.query2,
-          strength: r.strength,
-          type: 'query_relationship'
+        relationshipStrength: relationships.map(r => ({
+          target: r.target || 'unknown',
+          strength: parseFloat((this.convertToNumber(r.strength) / 10).toFixed(1)) || 0.1
         })),
-        recommendations
+        recommendations: recommendations || [
+          "Try using the DeFi analyzer for better trading insights",
+          "Consider exploring gas optimization tools",
+          "Set up alerts for frequently monitored addresses"
+        ]
       };
 
     } catch (error) {
@@ -247,13 +278,8 @@ export class ContextGraphService {
       // Return contextual fallback
       return {
         userProfile: {
-          userId,
-          totalQueries: 0,
-          uniqueToolsUsed: 0,
-          addressesInteracted: 0,
-          insightsGenerated: 0,
-          topToolCategories: [],
-          learningScore: 0
+          experience: 'beginner',
+          focus: 'general'
         },
         topTools: [],
         relationshipStrength: [],
@@ -331,22 +357,22 @@ export class ContextGraphService {
 
       const nodesByType: Record<string, number> = {};
       nodesByTypeResult.forEach(row => {
-        nodesByType[row.type || 'unknown'] = row.count;
+        nodesByType[row.type || 'unknown'] = this.convertToNumber(row.count);
       });
 
       const relationshipsByType: Record<string, number> = {};
       relsByTypeResult.forEach(row => {
-        relationshipsByType[row.type] = row.count;
+        relationshipsByType[row.type] = this.convertToNumber(row.count);
       });
 
       return {
-        totalNodes: nodeResult[0]?.total || 0,
-        totalRelationships: relResult[0]?.total || 0,
+        totalNodes: this.convertToNumber(nodeResult[0]?.total) || 0,
+        totalRelationships: this.convertToNumber(relResult[0]?.total) || 0,
         nodesByType,
         relationshipsByType,
         mostConnectedNodes: connectedNodesResult.map(row => ({
           id: row.id,
-          connections: row.connections,
+          connections: this.convertToNumber(row.connections),
           type: row.type
         }))
       };
@@ -406,11 +432,21 @@ export class ContextGraphService {
     const nodes = new Map();
     const relationships = [];
 
+    // Get proper user name based on userId
+    const getUserName = (id: string): string => {
+      switch (id.toLowerCase()) {
+        case 'alice': return 'Alice (Trader)';
+        case 'bob': return 'Bob (Developer)';
+        case 'charlie': return 'Charlie (Analyst)';
+        default: return `User ${id}`;
+      }
+    };
+
     // Add the user node
     nodes.set(userId, {
       id: userId,
       labels: ['User'],
-      properties: { id: userId, name: 'Alice', type: 'user' }
+      properties: { id: userId, name: getUserName(userId), type: 'user' }
     });
 
     queryResult.forEach(row => {
@@ -426,11 +462,11 @@ export class ContextGraphService {
           }
         });
 
-        // User -> Query relationship
+        // User -> Query relationship (use correct relationship type)
         relationships.push({
           from: userId,
           to: row.q.properties.id,
-          type: 'HAS_QUERY',
+          type: 'QUERIES',
           properties: { timestamp: row.q.properties.timestamp }
         });
       }
@@ -561,39 +597,87 @@ export class ContextGraphService {
           properties: row.q.properties
         });
 
-        // User -> Query relationship
+        // User -> Query relationship (use correct relationship type)
         if (row.u && row.u.properties && row.u.properties.id) {
           relationships.push({
             from: row.u.properties.id,
             to: row.q.properties.id,
-            type: 'HAS_QUERY',
+            type: 'QUERIES',
             properties: {}
           });
         }
       }
 
-      // Add tool, insight, address nodes and relationships
+      // Add tool nodes and relationships
       if (row.t && row.t.properties && row.t.properties.id) {
         nodes.set(row.t.properties.id, {
           id: row.t.properties.id,
           labels: ['Tool'],
           properties: row.t.properties
         });
+
+        // Query -> Tool relationship
+        if (row.q && row.q.properties && row.q.properties.id) {
+          relationships.push({
+            from: row.q.properties.id,
+            to: row.t.properties.id,
+            type: 'USED_TOOL',
+            properties: {}
+          });
+        }
       }
 
+      // Add insight nodes and relationships
       if (row.i && row.i.properties && row.i.properties.id) {
         nodes.set(row.i.properties.id, {
           id: row.i.properties.id,
           labels: ['Insight'],
           properties: row.i.properties
         });
+
+        // Query -> Insight relationship
+        if (row.q && row.q.properties && row.q.properties.id) {
+          relationships.push({
+            from: row.q.properties.id,
+            to: row.i.properties.id,
+            type: 'GENERATED_INSIGHT',
+            properties: {}
+          });
+        }
       }
 
+      // Add address nodes and relationships
       if (row.a && row.a.properties && row.a.properties.id) {
         nodes.set(row.a.properties.id, {
           id: row.a.properties.id,
           labels: ['Address'],
           properties: row.a.properties
+        });
+
+        // Query -> Address relationship
+        if (row.q && row.q.properties && row.q.properties.id) {
+          relationships.push({
+            from: row.q.properties.id,
+            to: row.a.properties.id,
+            type: 'INVOLVES_ADDRESS',
+            properties: {}
+          });
+        }
+      }
+
+      // Add Query -> Query relationships for related queries
+      if (row.other && row.other.properties && row.other.properties.id && row.q && row.q.properties && row.q.properties.id) {
+        nodes.set(row.other.properties.id, {
+          id: row.other.properties.id,
+          labels: ['Query'],
+          properties: row.other.properties
+        });
+
+        relationships.push({
+          from: row.q.properties.id,
+          to: row.other.properties.id,
+          type: 'RELATED_TO',
+          properties: {}
         });
       }
     });
@@ -677,6 +761,7 @@ export class ContextGraphService {
   private getContextRelationshipLabel(type: string): string {
     switch (type) {
       case 'HAS_QUERY': return 'asked';
+      case 'QUERIES': return 'asked';
       case 'USED_TOOL': return 'used';
       case 'GENERATED_INSIGHT': return 'learned';
       case 'INVOLVES_ADDRESS': return 'involves';
@@ -689,6 +774,7 @@ export class ContextGraphService {
   private calculateContextWeight(rel: any): number {
     switch (rel.type) {
       case 'HAS_QUERY': return 1.0;
+      case 'QUERIES': return 1.0;
       case 'USED_TOOL': return rel.properties?.frequency || 1.0;
       case 'GENERATED_INSIGHT': return rel.properties?.confidence || 0.8;
       case 'INVOLVES_ADDRESS': return rel.properties?.relevance || 1.0;
@@ -701,6 +787,7 @@ export class ContextGraphService {
   private getContextEdgeColor(type: string): string {
     switch (type) {
       case 'HAS_QUERY': return '#4CAF50';
+      case 'QUERIES': return '#4CAF50';
       case 'USED_TOOL': return '#FF5722';
       case 'GENERATED_INSIGHT': return '#9C27B0';
       case 'INVOLVES_ADDRESS': return '#607D8B';
@@ -999,5 +1086,20 @@ export class ContextGraphService {
         userId: userId || 'global'
       }
     };
+  }
+
+  // Helper method to safely convert BigInt values to numbers
+  private convertToNumber(value: any): number {
+    if (typeof value === 'bigint') {
+      return Number(value);
+    }
+    if (typeof value === 'string') {
+      const parsed = parseFloat(value);
+      return isNaN(parsed) ? 0 : parsed;
+    }
+    if (typeof value === 'number') {
+      return value;
+    }
+    return 0;
   }
 }

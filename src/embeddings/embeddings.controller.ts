@@ -254,9 +254,18 @@ export class EmbeddingsController {
   async healthCheck() {
     const isEnabled = this.embeddingsService.isEnabled();
 
+    let modelsHealth = null;
+    if (isEnabled) {
+      try {
+        modelsHealth = await this.embeddingsService.checkEmbeddingModelsHealth();
+      } catch (error) {
+        modelsHealth = { error: error.message };
+      }
+    }
+
     return {
       enabled: isEnabled,
-      model: process.env.EMBEDDING_MODEL || 'sentence-transformers/all-MiniLM-L6-v2',
+      models: modelsHealth,
       indexName: process.env.PINECONE_INDEX_NAME || 'arbitrum-chat-embeddings',
       dimension: parseInt(process.env.EMBEDDING_DIMENSION || '384'),
       status: isEnabled ? 'active' : 'disabled (missing PINECONE_API_KEY)'

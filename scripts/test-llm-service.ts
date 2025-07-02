@@ -1,5 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { LlmService } from '../src/llm/llm.service';
+import { KVCacheService } from '../src/cache/kv-cache.service';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -11,11 +12,32 @@ class MockConfigService {
     }
 }
 
+// Mock KVCacheService for testing
+class MockKVCacheService {
+    async getOptimizedPromptContext(): Promise<any> {
+        return null; // No cache context for testing
+    }
+
+    async storeToolResult(): Promise<void> {
+        // Mock implementation
+    }
+
+    async initializeConversationCache(): Promise<any> {
+        // Mock implementation
+        return {};
+    }
+
+    async getCachedToolResult(): Promise<any> {
+        return null; // No cached results for testing
+    }
+}
+
 async function testLlmService() {
     console.log('🧠 Testing LLM Service...');
 
     const configService = new MockConfigService() as any;
-    const llmService = new LlmService(configService);
+    const kvCacheService = new MockKVCacheService() as any;
+    const llmService = new LlmService(configService, kvCacheService);
 
     try {
         console.log('\n1️⃣ Testing basic chat response...');
