@@ -30,6 +30,9 @@
     "test:enhanced": "ts-node scripts/test-enhanced-system.ts",
     "test:neo4j-fix": "ts-node scripts/test-neo4j-fix.ts",
     "test:comprehensive-neo4j": "ts-node scripts/test-comprehensive-neo4j.ts",
+    "test:address-memory": "ts-node scripts/test-address-memory.ts",
+    "clear:neo4j": "ts-node scripts/clear-neo4j.ts",
+    "diagnose:memory": "ts-node scripts/diagnose-memory-storage.ts",
     "init:testdata": "ts-node scripts/initialize-test-data.ts",
     "find:models": "ts-node scripts/find-available-models.ts"
   },

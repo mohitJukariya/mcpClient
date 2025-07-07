@@ -637,7 +637,21 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
 
   async storeToolUsage(contextId: string, toolName: string): Promise<string> {
     try {
-      const toolId = `tool-${toolName}`;
+      // Validate inputs - ensure toolName is actually a string
+      if (typeof toolName !== 'string') {
+        this.logger.error('Invalid toolName type:', typeof toolName, toolName);
+        throw new Error(`Invalid toolName type: expected string, got ${typeof toolName}`);
+      }
+
+      if (!toolName || toolName.trim().length === 0) {
+        this.logger.error('Empty or invalid toolName:', toolName);
+        throw new Error('ToolName cannot be empty');
+      }
+
+      // Clean the toolName to ensure it's safe for Neo4j
+      const safeName = toolName.toString().trim();
+      const toolId = `tool-${safeName}`;
+
       const session = this.neo4jDriver.session();
 
       await session.run(
@@ -647,7 +661,7 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
         CREATE (q)-[:USED_TOOL]->(t)
         RETURN t
         `,
-        { contextId, toolId, toolName }
+        { contextId, toolId, toolName: safeName }
       );
 
       await session.close();

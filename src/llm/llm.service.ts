@@ -119,8 +119,8 @@ export class LlmService {
             // Extract tool calls
             const toolCalls = this.extractToolCalls(content, tools);
 
-            // Clean up content 
-            content = this.cleanResponse(content);
+            // Clean up content - pass hasToolCalls flag
+            content = this.cleanResponse(content, toolCalls.length > 0);
 
             this.logger.debug('✨ Final response:', { content, toolCalls });
             console.log('✨ FINAL LLM SERVICE RESPONSE:', {
@@ -161,10 +161,11 @@ export class LlmService {
         this.logger.log('🔧 BUILDING FULL SYSTEM PROMPT with all tool descriptions');
         this.logger.log(`🛠️  Including ${tools.length} tools in system prompt`);
 
-        let prompt = 'You are an Arbitrum blockchain ai agent. Your task is to provide real time blockchain data.\n\n';
+        let prompt = 'You are an Arbitrum blockchain AI agent. Your task is to provide real time blockchain data.\n\n';
 
-        prompt += 'CRITICAL: For ALL blockchain queries, you MUST respond with TOOL_CALL format.\n';
-        prompt += 'NEVER provide direct answers about blockchain data.\n\n';
+        prompt += '🚨 CRITICAL INSTRUCTION: For ALL blockchain queries, you MUST ALWAYS respond with TOOL_CALL format.\n';
+        prompt += '🚨 NEVER EVER provide direct answers about blockchain data - ALWAYS use tools.\n';
+        prompt += '🚨 If you provide a direct answer instead of using tools, you FAILED.\n\n';
 
         if (tools.length > 0) {
             prompt += 'AVAILABLE TOOLS:\n';
@@ -196,7 +197,9 @@ export class LlmService {
             prompt += 'Be CONCISE - show final cost only, not calculation steps to user.\n';
             prompt += 'Gas limits: Transfer=21k, ERC-20=50k-100k, Complex=200k+\n\n';
 
-            prompt += ' You should always be ready to use any tool which is relevant to the task mentioned in the query from user. You can execute following tools to perform varoius operations on the arbitrum blockchain. Feel free to use any tool which is closest to the user intent. You just have to use the tool call. You can not respond with normal chat response unless explicitly asked. Also if there are multiple tools matching from user intent then use your intelligence to use one tool among them which is best suited.\n\n';
+            prompt += '🚨 MANDATORY: You MUST use tools for ALL blockchain queries. NO EXCEPTIONS.\n';
+            prompt += '🚨 ALWAYS start your response with "TOOL_CALL:" - NEVER write anything else first.\n';
+            prompt += '🚨 If you need to get balance, use getBalance tool - do NOT guess or make up values.\n\n';
 
             prompt += 'MANDATORY RESPONSE FORMAT:\n';
             prompt += 'You MUST respond with: TOOL_CALL:toolname:{"parameter":"value"}\n\n';
@@ -208,9 +211,12 @@ export class LlmService {
             prompt += 'You: TOOL_CALL:getBalance:{"address":"0x123"}\n\n';
             prompt += 'User: "what token is 0xabc?"\n';
             prompt += 'You: TOOL_CALL:getTokenInfo:{"contractAddress":"0xabc"}\n\n';
+            prompt += 'User: "eth balance of 0x5616CAABa92cdf656E7d1bA36Fe1bd878E51c174"\n';
+            prompt += 'You: TOOL_CALL:getBalance:{"address":"0x5616CAABa92cdf656E7d1bA36Fe1bd878E51c174"}\n\n';
         }
 
-        prompt += 'IMPORTANT: Start your response with "TOOL_CALL:" - do not write anything else first.\n';
+        prompt += '🚨 CRITICAL: Your response MUST start with "TOOL_CALL:" - do not write anything else first.\n';
+        prompt += '🚨 NEVER provide direct answers like "The balance is X ETH" - ALWAYS use tools.\n';
 
         if (personalityId) {
             const personalityPrompt = this.personalityService.getPersonalitySystemPrompt(personalityId, prompt);
@@ -346,6 +352,13 @@ export class LlmService {
                 }
             }
 
+            // CRITICAL FIX: If the argument is already a full address, don't convert it to a reference
+            // Only convert references to addresses, not addresses to references
+            if (args.startsWith('0x') && args.length === 42) {
+                // This is already a full address, don't convert it
+                return args;
+            }
+
             return args;
         }
 
@@ -393,12 +406,12 @@ export class LlmService {
         return resolvedToolCalls;
     }
 
-    private cleanResponse(content: string): string {
+    private cleanResponse(content: string, hasToolCalls: boolean = false): string {
         let cleaned = content;
 
         // Log original content for debugging
         console.log("logging original content before cleanup:", content);
-        this.logger.debug(`Original response length: ${content.length}`);
+        this.logger.debug(`Original response length: ${content.length}, hasToolCalls: ${hasToolCalls}`);
 
         // Handle DeepSeek thinking patterns - remove <think>...</think>
         if (cleaned.includes('<think>')) {
@@ -456,8 +469,14 @@ export class LlmService {
 
         console.log("final cleaned response:", cleaned);
 
-        // Only use fallback if there's truly no meaningful content
-        if (!cleaned || cleaned.length < 5 || cleaned.match(/^[\s\n]*$/)) {
+        // If we have tool calls, we should return empty content to let the tool results be shown
+        if (hasToolCalls && (!cleaned || cleaned.length < 5 || cleaned.match(/^[\s\n]*$/))) {
+            this.logger.debug('Response was empty after cleaning but tool calls are present, returning empty content');
+            return '';
+        }
+
+        // Only use fallback if there's truly no meaningful content AND no tool calls
+        if (!hasToolCalls && (!cleaned || cleaned.length < 5 || cleaned.match(/^[\s\n]*$/))) {
             this.logger.warn('Response was empty after cleaning, using fallback');
             return 'I can help you with Arbitrum blockchain analytics. What would you like to know?';
         }
@@ -616,7 +635,7 @@ export class LlmService {
                 toolCalls = this.resolveEntityReferencesSync(toolCalls, optimizedContext.entityReferences);
             }
 
-            content = this.cleanResponse(content);
+            content = this.cleanResponse(content, toolCalls.length > 0);
 
             this.logger.debug('✨ Optimized response generated');
 

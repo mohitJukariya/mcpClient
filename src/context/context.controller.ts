@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Param, Query, Body } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Param, Query, Body, Logger } from '@nestjs/common';
 import { ContextUserService, TestUser, UserContextEntry } from './context-user.service';
 import { ContextStorageService } from './context-storage.service';
 import { ContextGraphService } from './context-graph.service';
@@ -35,6 +35,8 @@ interface FrontendContextResponse {
 
 @Controller('context')
 export class ContextController {
+  private readonly logger = new Logger(ContextController.name);
+
   constructor(
     private contextUserService: ContextUserService,
     private contextStorageService: ContextStorageService,
@@ -101,8 +103,43 @@ export class ContextController {
 
       // Store tool usage relationships
       if (frontendContextData.toolsUsed && frontendContextData.toolsUsed.length > 0) {
-        for (const toolName of frontendContextData.toolsUsed) {
-          await this.contextStorageService.storeToolUsage(contextId, toolName);
+        for (const toolEntry of frontendContextData.toolsUsed) {
+          // Validate and extract tool name - handle both string and object cases
+          let toolName: string;
+
+          if (typeof toolEntry === 'string') {
+            toolName = toolEntry;
+          } else if (typeof toolEntry === 'object' && toolEntry !== null) {
+            // Handle case where frontend sends tool objects instead of strings
+            this.logger.warn('Frontend sent tool object instead of string:', JSON.stringify(toolEntry));
+
+            // Try to extract name from various object structures
+            if ((toolEntry as any).name) {
+              toolName = (toolEntry as any).name;
+            } else if ((toolEntry as any).tool) {
+              toolName = (toolEntry as any).tool;
+            } else if ((toolEntry as any).type) {
+              toolName = (toolEntry as any).type;
+            } else {
+              this.logger.warn('Unable to extract tool name from object:', toolEntry);
+              continue; // Skip invalid entries
+            }
+          } else {
+            this.logger.warn('Invalid tool entry type:', typeof toolEntry, toolEntry);
+            continue; // Skip invalid entries
+          }
+
+          // Ensure toolName is a valid string and not a complex object
+          if (typeof toolName === 'string' && toolName.length > 0 && !toolName.includes('{') && !toolName.includes('[')) {
+            try {
+              await this.contextStorageService.storeToolUsage(contextId, toolName);
+            } catch (error) {
+              this.logger.error(`Failed to store tool usage for ${toolName}:`, error.message);
+              // Continue with other tools even if one fails
+            }
+          } else {
+            this.logger.warn('Skipping invalid tool name:', toolName);
+          }
         }
       }
 
