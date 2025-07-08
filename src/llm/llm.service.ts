@@ -246,9 +246,11 @@ export class LlmService {
 
             this.logger.debug(`🔍 Found tool call (primary): ${toolName} with args: ${argsString}`);
 
-            // Check if the tool exists
+            // Check if the tool exists - be more flexible about tool validation
             const tool = tools.find(t => t.name === toolName);
-            if (tool) {
+            const isKnownTool = this.isKnownBlockchainTool(toolName);
+
+            if (tool || isKnownTool) {
                 try {
                     const toolArguments = JSON.parse(argsString);
                     toolCalls.push({ name: toolName, arguments: toolArguments });
@@ -258,7 +260,7 @@ export class LlmService {
                     toolCalls.push({ name: toolName, arguments: {} });
                 }
             } else {
-                this.logger.warn(`🚫 Tool '${toolName}' not found in available tools`);
+                this.logger.warn(`🚫 Tool '${toolName}' not found in available tools (provided: ${tools.map(t => t.name).join(', ')})`);
             }
         }
 
@@ -274,9 +276,11 @@ export class LlmService {
 
                 this.logger.debug(`🔍 Found tool call (alternative): ${toolName} with args: ${argsString}`);
 
-                // Check if the tool exists
+                // Check if the tool exists - be more flexible about tool validation
                 const tool = tools.find(t => t.name === toolName);
-                if (tool) {
+                const isKnownTool = this.isKnownBlockchainTool(toolName);
+
+                if (tool || isKnownTool) {
                     try {
                         const toolArguments = JSON.parse(argsString);
                         toolCalls.push({ name: toolName, arguments: toolArguments });
@@ -286,7 +290,7 @@ export class LlmService {
                         toolCalls.push({ name: toolName, arguments: {} });
                     }
                 } else {
-                    this.logger.warn(`🚫 Tool '${toolName}' not found in available tools`);
+                    this.logger.warn(`🚫 Tool '${toolName}' not found in available tools (provided: ${tools.map(t => t.name).join(', ')})`);
                 }
             }
         }
@@ -621,12 +625,8 @@ export class LlmService {
 
             let content = response.choices?.[0]?.message?.content?.trim() || '';
 
-            // Use optimized tool list from cache
-            const tools = optimizedContext.relevantTools.map(toolName => ({
-                name: toolName,
-                description: `${toolName} tool`,
-                input_schema: {}
-            }));
+            // Create proper tool objects for extraction - use all known tools
+            const tools = this.getAllKnownBlockchainTools();
 
             let toolCalls = this.extractToolCalls(content, tools);
 
@@ -803,6 +803,52 @@ export class LlmService {
             this.logger.warn(`Failed to get cached tool result: ${error.message}`);
             return null;
         }
+    }
+
+    /**
+     * Check if a tool name is a known blockchain tool
+     * This helps when the tools array might be incomplete but we know the tool exists
+     */
+    private isKnownBlockchainTool(toolName: string): boolean {
+        const knownTools = [
+            'getBalance', 'getTokenBalance', 'getTransaction', 'getTransactionReceipt',
+            'getBlock', 'getLatestBlock', 'getTransactionHistory', 'getContractAbi',
+            'getGasPrice', 'getEthSupply', 'validateAddress', 'getMultiBalance',
+            'getERC20Transfers', 'getERC721Transfers', 'getInternalTransactions',
+            'getContractSource', 'getTokenInfo', 'getGasOracle', 'getTransactionStatus',
+            'getContractCreation', 'getAddressType'
+        ];
+
+        return knownTools.includes(toolName);
+    }
+
+    /**
+     * Get all known blockchain tools as proper LLMTool objects
+     */
+    private getAllKnownBlockchainTools(): LLMTool[] {
+        return [
+            { name: 'getBalance', description: 'Get ETH balance', input_schema: {} },
+            { name: 'getTokenBalance', description: 'Get token balance', input_schema: {} },
+            { name: 'getTransaction', description: 'Get transaction details', input_schema: {} },
+            { name: 'getTransactionReceipt', description: 'Get transaction receipt', input_schema: {} },
+            { name: 'getBlock', description: 'Get block information', input_schema: {} },
+            { name: 'getLatestBlock', description: 'Get latest block number', input_schema: {} },
+            { name: 'getTransactionHistory', description: 'Get transaction history', input_schema: {} },
+            { name: 'getContractAbi', description: 'Get contract ABI', input_schema: {} },
+            { name: 'getGasPrice', description: 'Get current gas price', input_schema: {} },
+            { name: 'getEthSupply', description: 'Get total ETH supply', input_schema: {} },
+            { name: 'validateAddress', description: 'Validate address format', input_schema: {} },
+            { name: 'getMultiBalance', description: 'Get ETH balances for multiple addresses', input_schema: {} },
+            { name: 'getERC20Transfers', description: 'Get ERC-20 token transfers', input_schema: {} },
+            { name: 'getERC721Transfers', description: 'Get ERC-721 NFT transfers', input_schema: {} },
+            { name: 'getInternalTransactions', description: 'Get internal transactions', input_schema: {} },
+            { name: 'getContractSource', description: 'Get verified contract source code', input_schema: {} },
+            { name: 'getTokenInfo', description: 'Get detailed token information', input_schema: {} },
+            { name: 'getGasOracle', description: 'Get gas price recommendations', input_schema: {} },
+            { name: 'getTransactionStatus', description: 'Get transaction status and receipt', input_schema: {} },
+            { name: 'getContractCreation', description: 'Get contract creation details', input_schema: {} },
+            { name: 'getAddressType', description: 'Check if address is contract or EOA', input_schema: {} }
+        ];
     }
 
 }
