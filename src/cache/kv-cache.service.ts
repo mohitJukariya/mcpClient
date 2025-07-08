@@ -141,6 +141,9 @@ export class KVCacheService implements OnModuleInit, OnModuleDestroy {
             cache.lastUpdated = Date.now();
             cache.expiresAt = Date.now() + (this.CONVERSATION_TTL * 1000);
 
+            // CRITICAL FIX: Update entity references before storing
+            this.updateEntityReferences(cache);
+
             await this.redis.setex(
                 `conv:${cache.conversationId}`,
                 this.CONVERSATION_TTL,
@@ -631,16 +634,18 @@ export class KVCacheService implements OnModuleInit, OnModuleDestroy {
     }
 
     private updateEntityReferences(cache: ConversationKVCache): void {
-        // Create short references for long addresses
+        // Create short references for long addresses - CRITICAL FIX: Map short->long, not long->short
         cache.activeAddresses.forEach((addr, index) => {
-            if (!cache.tokenOptimization.entityReferences[addr]) {
-                cache.tokenOptimization.entityReferences[addr] = `addr${index + 1}`;
+            const shortRef = `addr${index + 1}`;
+            if (!cache.tokenOptimization.entityReferences[shortRef]) {
+                cache.tokenOptimization.entityReferences[shortRef] = addr;
             }
         });
 
         cache.activeTokens.forEach((token, index) => {
-            if (!cache.tokenOptimization.entityReferences[token]) {
-                cache.tokenOptimization.entityReferences[token] = `token${index + 1}`;
+            const shortRef = `token${index + 1}`;
+            if (!cache.tokenOptimization.entityReferences[shortRef]) {
+                cache.tokenOptimization.entityReferences[shortRef] = token;
             }
         });
     }

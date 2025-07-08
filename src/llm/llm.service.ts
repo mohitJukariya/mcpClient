@@ -713,7 +713,7 @@ export class LlmService {
         // Entity references for shorter addresses
         if (Object.keys(optimizedContext.entityReferences).length > 0) {
             prompt += 'Entity refs: ';
-            Object.entries(optimizedContext.entityReferences).forEach(([full, short]) => {
+            Object.entries(optimizedContext.entityReferences).forEach(([short, full]) => {
                 prompt += `${short}=${full} `;
             });
             prompt += '\n\n';
