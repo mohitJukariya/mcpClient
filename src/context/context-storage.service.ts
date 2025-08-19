@@ -47,14 +47,28 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
 
   private async initializeStorages() {
     try {
-      // Initialize Redis (KV Store)
-      this.redis = new Redis({
-        host: this.configService.get<string>('REDIS_HOST', 'localhost'),
-        port: this.configService.get<number>('REDIS_PORT', 6379),
-        password: this.configService.get<string>('REDIS_PASSWORD') || undefined,
-        maxRetriesPerRequest: 3,
-        lazyConnect: true,
-      });
+      // Initialize Redis (KV Store) with REDIS_URL support
+      const redisUrl = this.configService.get<string>('REDIS_URL');
+      if (redisUrl) {
+        this.redis = new Redis(redisUrl, {
+          maxRetriesPerRequest: 3,
+          lazyConnect: true,
+          connectTimeout: 10000,
+          commandTimeout: 5000,
+          enableOfflineQueue: true,
+        });
+      } else {
+        this.redis = new Redis({
+          host: this.configService.get<string>('REDIS_HOST', 'localhost'),
+          port: this.configService.get<number>('REDIS_PORT', 6379),
+          password: this.configService.get<string>('REDIS_PASSWORD') || undefined,
+          maxRetriesPerRequest: 3,
+          lazyConnect: true,
+          connectTimeout: 10000,
+          commandTimeout: 5000,
+          enableOfflineQueue: true,
+        });
+      }
 
       try {
         await this.redis.ping();
@@ -64,21 +78,44 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
         this.redis = null;
       }
 
-      // Initialize Neo4j (Graph DB)
+      // Initialize Neo4j (Graph DB) with enhanced connection options
       try {
+        const neo4jUri = this.configService.get<string>('NEO4J_URI', 'bolt://localhost:7687');
+        const neo4jUser = this.configService.get<string>('NEO4J_USER', 'neo4j');
+        const neo4jPassword = this.configService.get<string>('NEO4J_PASSWORD', 'password');
+
+        this.logger.log(`🔄 Connecting to Neo4j at: ${neo4jUri}`);
+
+        const driverConfig: any = {
+          maxConnectionPoolSize: 10,
+          connectionAcquisitionTimeout: 30000,
+          connectionTimeout: 20000,
+          maxTransactionRetryTime: 15000,
+          logging: {
+            level: 'warn' as any,
+            logger: (level: any, message: any) => this.logger.debug(`Neo4j ${level}: ${message}`)
+          },
+          disableLosslessIntegers: true
+        };
+
+        // Only add encryption/trust config if URI doesn't include it
+        if (!neo4jUri.startsWith('neo4j+s://')) {
+          driverConfig.encrypted = 'ENCRYPTION_ON';
+          driverConfig.trust = 'TRUST_SYSTEM_CA_SIGNED_CERTIFICATES';
+        }
+
         this.neo4jDriver = neo4j.driver(
-          this.configService.get<string>('NEO4J_URI', 'bolt://localhost:7687'),
-          neo4j.auth.basic(
-            this.configService.get<string>('NEO4J_USER', 'neo4j'),
-            this.configService.get<string>('NEO4J_PASSWORD', 'password')
-          )
+          neo4jUri,
+          neo4j.auth.basic(neo4jUser, neo4jPassword),
+          driverConfig
         );
 
-        // Test Neo4j connection with write access
+        // Test Neo4j connection with write access and timeout
         const session = this.neo4jDriver.session({
           defaultAccessMode: neo4j.session.WRITE
         });
-        await session.run('RETURN 1');
+
+        const result = await session.run('RETURN 1 as test');
         await session.close();
 
         this.logger.log('✅ Neo4j Graph database connected');
@@ -87,6 +124,9 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
         await this.initializeGraphSchema();
       } catch (neo4jError) {
         this.logger.warn('⚠️ Neo4j connection failed, Graph DB disabled:', neo4jError.message);
+        if (neo4jError.code) {
+          this.logger.warn(`Neo4j Error Code: ${neo4jError.code}`);
+        }
         this.neo4jDriver = null;
       }
 
@@ -103,14 +143,28 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
       defaultAccessMode: neo4j.session.WRITE
     });
     try {
-      // Create indexes for better performance
-      await session.run('CREATE INDEX user_id_index IF NOT EXISTS FOR (u:User) ON (u.id)');
-      await session.run('CREATE INDEX context_id_index IF NOT EXISTS FOR (c:Context) ON (c.id)');
-      await session.run('CREATE INDEX tool_name_index IF NOT EXISTS FOR (t:Tool) ON (t.name)');
+      this.logger.log('🔄 Initializing Neo4j schema...');
+
+      // Create indexes for better performance with IF NOT EXISTS
+      const indexQueries = [
+        'CREATE INDEX user_id_index IF NOT EXISTS FOR (u:User) ON (u.id)',
+        'CREATE INDEX context_id_index IF NOT EXISTS FOR (c:Context) ON (c.id)',
+        'CREATE INDEX tool_name_index IF NOT EXISTS FOR (t:Tool) ON (t.name)',
+        'CREATE INDEX address_value_index IF NOT EXISTS FOR (a:Address) ON (a.value)'
+      ];
+
+      for (const query of indexQueries) {
+        try {
+          await session.run(query);
+        } catch (error) {
+          this.logger.warn(`Index creation failed for query: ${query}`, error.message);
+        }
+      }
 
       this.logger.log('✅ Graph schema initialized');
     } catch (error) {
-      this.logger.error('Error initializing graph schema:', error);
+      this.logger.error('❌ Error initializing graph schema:', error.message);
+      throw error;
     } finally {
       await session.close();
     }
