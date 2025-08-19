@@ -74,8 +74,10 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
           )
         );
 
-        // Test Neo4j connection
-        const session = this.neo4jDriver.session();
+        // Test Neo4j connection with write access
+        const session = this.neo4jDriver.session({
+          defaultAccessMode: neo4j.session.WRITE
+        });
         await session.run('RETURN 1');
         await session.close();
 
@@ -97,7 +99,9 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
   private async initializeGraphSchema() {
     if (!this.neo4jDriver) return;
 
-    const session = this.neo4jDriver.session();
+    const session = this.neo4jDriver.session({
+      defaultAccessMode: neo4j.session.WRITE
+    });
     try {
       // Create indexes for better performance
       await session.run('CREATE INDEX user_id_index IF NOT EXISTS FOR (u:User) ON (u.id)');
@@ -228,7 +232,7 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
       this.logger.debug(`🌐 Stored in Graph: ${contextNode.type}:${contextNode.id}`);
     } catch (error) {
       this.logger.error('Error storing in graph:', error);
-      throw error;
+      // Don't throw error, allow graceful degradation
     } finally {
       await session.close();
     }
@@ -246,7 +250,7 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
       return result.records.map(record => record.toObject());
     } catch (error) {
       this.logger.error('Error querying graph:', error);
-      throw error;
+      return [];
     } finally {
       await session.close();
     }
@@ -597,16 +601,36 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
   }
 
   async cleanup(): Promise<void> {
-    if (this.redis) {
-      await this.redis.quit();
+    try {
+      if (this.redis) {
+        this.logger.log('🔄 Closing Redis connection...');
+        await this.redis.quit();
+        this.redis = null;
+        this.logger.log('✅ Redis connection closed');
+      }
+    } catch (error) {
+      this.logger.error('Error closing Redis connection:', error);
     }
-    if (this.neo4jDriver) {
-      await this.neo4jDriver.close();
+
+    try {
+      if (this.neo4jDriver) {
+        this.logger.log('🔄 Closing Neo4j connection...');
+        await this.neo4jDriver.close();
+        this.neo4jDriver = null;
+        this.logger.log('✅ Neo4j connection closed');
+      }
+    } catch (error) {
+      this.logger.error('Error closing Neo4j connection:', error);
     }
   }
 
   // Additional methods for frontend context storage
   async storeInsight(contextId: string, content: string, confidence: number): Promise<string> {
+    if (!this.neo4jDriver) {
+      this.logger.warn('Neo4j not available, insight storage disabled');
+      return 'insight-disabled';
+    }
+
     try {
       const insightId = `insight-${contextId}-${Date.now()}`;
       const session = this.neo4jDriver.session();
@@ -631,21 +655,26 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
       return insightId;
     } catch (error) {
       this.logger.error('Failed to store insight:', error);
-      throw error;
+      return 'insight-error';
     }
   }
 
   async storeToolUsage(contextId: string, toolName: string): Promise<string> {
+    if (!this.neo4jDriver) {
+      this.logger.warn('Neo4j not available, tool usage storage disabled');
+      return 'tool-disabled';
+    }
+
     try {
       // Validate inputs - ensure toolName is actually a string
       if (typeof toolName !== 'string') {
         this.logger.error('Invalid toolName type:', typeof toolName, toolName);
-        throw new Error(`Invalid toolName type: expected string, got ${typeof toolName}`);
+        return 'tool-error';
       }
 
       if (!toolName || toolName.trim().length === 0) {
         this.logger.error('Empty or invalid toolName:', toolName);
-        throw new Error('ToolName cannot be empty');
+        return 'tool-error';
       }
 
       // Clean the toolName to ensure it's safe for Neo4j
@@ -669,11 +698,16 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
       return toolId;
     } catch (error) {
       this.logger.error('Failed to store tool usage:', error);
-      throw error;
+      return 'tool-error';
     }
   }
 
   async storeAddressRelationship(contextId: string, address: string): Promise<string> {
+    if (!this.neo4jDriver) {
+      this.logger.warn('Neo4j not available, address relationship storage disabled');
+      return 'address-disabled';
+    }
+
     try {
       const addressId = `addr-${address}`;
       const session = this.neo4jDriver.session();
@@ -693,7 +727,7 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
       return addressId;
     } catch (error) {
       this.logger.error('Failed to store address relationship:', error);
-      throw error;
+      return 'address-error';
     }
   }
 

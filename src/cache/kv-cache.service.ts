@@ -79,31 +79,92 @@ export class KVCacheService implements OnModuleInit, OnModuleDestroy {
     constructor(private configService: ConfigService) { }
 
     async onModuleInit() {
-        await this.initializeRedis();
+        try {
+            await this.initializeRedis();
+        } catch (error) {
+            this.logger.warn('⚠️ Redis initialization failed, KV cache disabled:', error.message);
+        }
     }
 
     async onModuleDestroy() {
         if (this.redis) {
-            await this.redis.quit();
+            try {
+                await this.redis.quit();
+            } catch (error) {
+                // Ignore cleanup errors
+            }
         }
     }
 
     private async initializeRedis() {
+        // Check if Redis should be skipped
+        if (process.env.SKIP_REDIS === 'true') {
+            this.logger.warn('⚠️ Redis disabled by SKIP_REDIS environment variable');
+            return;
+        }
+
+        // Try different Redis connection methods
+        const redisUrl = this.configService.get<string>('REDIS_URL');
+        const redisHost = this.configService.get<string>('REDIS_HOST', 'localhost');
+        const redisPort = this.configService.get<number>('REDIS_PORT', 6379);
+        const redisPassword = this.configService.get<string>('REDIS_PASSWORD');
+
+        if (!redisUrl && !redisHost) {
+            this.logger.warn('⚠️ No Redis configuration found, KV cache disabled');
+            return;
+        }
+
         try {
-            this.redis = new Redis({
-                host: this.configService.get<string>('REDIS_HOST', 'localhost'),
-                port: this.configService.get<number>('REDIS_PORT', 6379),
-                password: this.configService.get<string>('REDIS_PASSWORD') || undefined,
-                maxRetriesPerRequest: 3,
-                lazyConnect: true,
-                keyPrefix: 'kv_cache:',
+            if (redisUrl) {
+                this.redis = new Redis(redisUrl, {
+                    maxRetriesPerRequest: 3,
+                    connectTimeout: 10000,
+                    commandTimeout: 5000,
+                    lazyConnect: false,  // Connect immediately
+                    keyPrefix: 'kv_cache:',
+                    enableOfflineQueue: true  // Allow queuing while connecting
+                });
+            } else {
+                this.redis = new Redis({
+                    host: redisHost,
+                    port: redisPort,
+                    password: redisPassword || undefined,
+                    maxRetriesPerRequest: 3,
+                    connectTimeout: 10000,
+                    commandTimeout: 5000,
+                    lazyConnect: false,
+                    keyPrefix: 'kv_cache:',
+                    enableOfflineQueue: true
+                });
+            }
+
+            // Add error handler to prevent unhandled errors
+            this.redis.on('error', (error) => {
+                this.logger.warn('⚠️ Redis connection error:', error.message);
+                // Don't set to null immediately, let it retry
             });
 
-            await this.redis.ping();
-            this.logger.log('✅ KV Cache Redis connection established');
+            this.redis.on('ready', () => {
+                this.logger.log('✅ KV Cache Redis connection established');
+            });
+
+            this.redis.on('close', () => {
+                this.logger.warn('⚠️ Redis connection closed');
+            });
+
+            // Wait for connection to be ready
+            await new Promise((resolve, reject) => {
+                this.redis.on('ready', resolve);
+                this.redis.on('error', reject);
+                setTimeout(() => reject(new Error('Redis connection timeout')), 10000);
+            });
+
         } catch (error) {
             this.logger.warn('⚠️ Redis connection failed for KV Cache:', error.message);
-            this.redis = null;
+            if (this.redis) {
+                this.redis.removeAllListeners();
+                this.redis = null;
+            }
         }
     }
 

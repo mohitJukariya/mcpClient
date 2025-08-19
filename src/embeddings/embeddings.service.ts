@@ -50,44 +50,55 @@ export class EmbeddingsService {
   private isInitialized = false;
 
   constructor(private configService: ConfigService) {
-    // Initialize Pinecone
-    const pineconeApiKey = this.configService.get<string>('PINECONE_API_KEY');
-    if (!pineconeApiKey) {
-      this.logger.warn('PINECONE_API_KEY not found. Embedding functionality will be disabled.');
-      return;
+    this.initializeServices();
+  }
+
+  private initializeServices(): void {
+    try {
+      // Initialize Pinecone
+      const pineconeApiKey = this.configService.get<string>('PINECONE_API_KEY');
+      if (!pineconeApiKey) {
+        this.logger.warn('⚠️ PINECONE_API_KEY not found. Vector embedding functionality will be disabled.');
+        this.pinecone = null;
+      } else {
+        this.pinecone = new Pinecone({
+          apiKey: pineconeApiKey,
+        });
+        this.indexName = this.configService.get<string>('PINECONE_INDEX_NAME') || 'arbitrum-chat-embeddings';
+        this.logger.log('✅ Pinecone client initialized');
+      }
+
+      // Initialize Hugging Face for embeddings
+      const hfApiKey = this.configService.get<string>('HUGGINGFACE_API_KEY');
+      if (!hfApiKey) {
+        this.logger.warn('⚠️ HUGGINGFACE_API_KEY not found. Embedding generation will be disabled.');
+        this.hf = null;
+      } else {
+        this.hf = new InferenceClient(hfApiKey);
+        this.logger.log('✅ Hugging Face client initialized');
+      }
+
+      // Optimized embedding models - fast and reliable 384d models
+      this.embeddingModels = [
+        'sentence-transformers/all-MiniLM-L6-v2',          // Fast, reliable
+        'sentence-transformers/multi-qa-MiniLM-L6-cos-v1', // Good for Q&A
+        'sentence-transformers/all-MiniLM-L12-v2',         // More accurate
+        'intfloat/e5-small-v2',                           // Alternative
+        'BAAI/bge-small-en-v1.5',                         // Good performance
+      ];
+
+      this.embeddingDimension = parseInt(this.configService.get<string>('EMBEDDING_DIMENSION') || '384');
+
+      // Initialize model performance tracking
+      this.initializeModelPerformance();
+
+      this.logger.log(`Initialized Embeddings Service with ${this.embeddingModels.length} models`);
+
+      // Start async initialization
+      this.initializeAsync();
+    } catch (error) {
+      this.logger.error('Error initializing embedding services:', error);
     }
-
-    this.pinecone = new Pinecone({
-      apiKey: pineconeApiKey,
-    });
-
-    // Initialize Hugging Face for embeddings
-    const hfApiKey = this.configService.get<string>('HUGGINGFACE_API_KEY');
-    if (!hfApiKey) {
-      throw new Error('HUGGINGFACE_API_KEY is required for embeddings');
-    }
-
-    this.hf = new InferenceClient(hfApiKey);
-    this.indexName = this.configService.get<string>('PINECONE_INDEX_NAME') || 'arbitrum-chat-embeddings';
-
-    // Optimized embedding models - fast and reliable 384d models
-    this.embeddingModels = [
-      'sentence-transformers/all-MiniLM-L6-v2',          // Fast, reliable
-      'sentence-transformers/multi-qa-MiniLM-L6-cos-v1', // Good for Q&A
-      'sentence-transformers/all-MiniLM-L12-v2',         // More accurate
-      'intfloat/e5-small-v2',                           // Alternative
-      'BAAI/bge-small-en-v1.5',                         // Good performance
-    ];
-
-    this.embeddingDimension = parseInt(this.configService.get<string>('EMBEDDING_DIMENSION') || '384');
-
-    // Initialize model performance tracking
-    this.initializeModelPerformance();
-
-    this.logger.log(`Initialized Embeddings Service with ${this.embeddingModels.length} models`);
-
-    // Start async initialization
-    this.initializeAsync();
   }
 
   private initializeModelPerformance(): void {
@@ -105,12 +116,17 @@ export class EmbeddingsService {
 
   private async initializeAsync(): Promise<void> {
     try {
-      await this.initializeIndex();
-      await this.warmUpModels();
+      if (this.pinecone) {
+        await this.initializeIndex();
+      }
+      if (this.hf && this.embeddingModels) {
+        await this.warmUpModels();
+      }
       this.isInitialized = true;
       this.logger.log('✅ Embeddings service fully initialized');
     } catch (error) {
-      this.logger.error('❌ Failed to initialize embeddings service:', error);
+      this.logger.warn('⚠️ Embeddings service initialization had errors, running in degraded mode:', error.message);
+      this.isInitialized = true; // Allow service to continue in degraded mode
     }
   }
 
@@ -142,10 +158,11 @@ export class EmbeddingsService {
         await this.waitForIndexReady();
       }
 
-      this.logger.log(`Pinecone index ${this.indexName} is ready`);
+      this.logger.log(`✅ Pinecone index ${this.indexName} is ready`);
     } catch (error) {
       this.logger.error('Error initializing Pinecone index:', error);
-      throw error;
+      // Don't throw error, allow graceful degradation
+      this.pinecone = null;
     }
   }
 
@@ -300,9 +317,10 @@ export class EmbeddingsService {
     this.logger.debug(`🧹 Cleaned ${toDelete.length} old cache entries`);
   }
 
-  async generateEmbedding(text: string): Promise<number[]> {
+  async generateEmbedding(text: string): Promise<number[] | null> {
     if (!this.hf) {
-      throw new Error('Hugging Face client not initialized');
+      this.logger.warn('Hugging Face client not initialized, embedding generation disabled');
+      return null;
     }
 
     const cleanText = text.trim().substring(0, 8000);
@@ -387,8 +405,8 @@ export class EmbeddingsService {
             // This was the last retry for this model
             if (i === sortedModels.length - 1) {
               // This was the last model
-              this.logger.error('🚨 All embedding models failed!');
-              throw new Error(`All ${sortedModels.length} embedding models failed. Last error: ${error.message}`);
+              this.logger.error('🚨 All embedding models failed, embedding generation disabled!');
+              return null;
             }
             // Try next model
             break;
@@ -401,7 +419,8 @@ export class EmbeddingsService {
       }
     }
 
-    throw new Error('Unexpected error in embedding generation');
+    this.logger.error('Unexpected error in embedding generation');
+    return null;
   }
 
   async storeMessageEmbedding(
@@ -413,11 +432,15 @@ export class EmbeddingsService {
   ): Promise<string> {
     if (!this.pinecone) {
       this.logger.warn('Pinecone not initialized. Skipping embedding storage.');
-      return 'disabled';
+      return 'embedding-disabled';
     }
 
     try {
       const embedding = await this.generateEmbedding(content);
+      if (!embedding) {
+        return 'embedding-failed';
+      }
+
       const recordId = `${sessionId}-${messageType}-${messageIndex}-${uuidv4().substring(0, 8)}`;
 
       const record: EmbeddingRecord = {
@@ -456,7 +479,7 @@ export class EmbeddingsService {
 
       // Don't throw - let chat continue even if embeddings fail
       this.logger.warn('⚠️  Embedding storage failed, but chat will continue normally');
-      return 'failed';
+      return 'embedding-error';
     }
   }
 
@@ -473,6 +496,11 @@ export class EmbeddingsService {
 
     try {
       const queryEmbedding = await this.generateEmbedding(query);
+      if (!queryEmbedding) {
+        this.logger.warn('Failed to generate query embedding, returning empty results');
+        return [];
+      }
+
       const index = this.pinecone.index(this.indexName);
 
       const queryRequest: any = {
