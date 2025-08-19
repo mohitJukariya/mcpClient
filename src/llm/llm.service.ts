@@ -163,9 +163,10 @@ export class LlmService {
 
         let prompt = 'You are an Arbitrum blockchain AI agent. Your task is to provide real time blockchain data.\n\n';
 
-        prompt += '🚨 CRITICAL INSTRUCTION: For ALL blockchain queries, you MUST ALWAYS respond with TOOL_CALL format.\n';
-        prompt += '🚨 NEVER EVER provide direct answers about blockchain data - ALWAYS use tools.\n';
-        prompt += '🚨 If you provide a direct answer instead of using tools, you FAILED.\n\n';
+        prompt += '🚨 CRITICAL INSTRUCTION: For BLOCKCHAIN-RELATED queries, you MUST respond with TOOL_CALL format.\n';
+        prompt += '🚨 NEVER provide direct answers about blockchain data - ALWAYS use tools for blockchain queries.\n';
+        prompt += '🚨 However, for simple greetings (hi, hello, etc.) or general conversation, respond normally without tools.\n';
+        prompt += '🚨 Only use tools when the user is asking for specific blockchain data like balances, transactions, gas prices, etc.\n\n';
 
         if (tools.length > 0) {
             prompt += 'AVAILABLE TOOLS:\n';
@@ -197,26 +198,25 @@ export class LlmService {
             prompt += 'Be CONCISE - show final cost only, not calculation steps to user.\n';
             prompt += 'Gas limits: Transfer=21k, ERC-20=50k-100k, Complex=200k+\n\n';
 
-            prompt += '🚨 MANDATORY: You MUST use tools for ALL blockchain queries. NO EXCEPTIONS.\n';
-            prompt += '🚨 ALWAYS start your response with "TOOL_CALL:" - NEVER write anything else first.\n';
-            prompt += '🚨 If you need to get balance, use getBalance tool - do NOT guess or make up values.\n\n';
+            prompt += '🚨 MANDATORY: You MUST use tools for BLOCKCHAIN queries. NO EXCEPTIONS.\n';
+            prompt += '🚨 For blockchain data, ALWAYS start with "TOOL_CALL:" - NEVER provide direct answers.\n';
+            prompt += '🚨 For greetings (hi, hello, hey) respond naturally as Alice without tools.\n';
+            prompt += '🚨 If you need blockchain data like balance, use getBalance tool - do NOT guess values.\n\n';
 
-            prompt += 'MANDATORY RESPONSE FORMAT:\n';
+            prompt += 'MANDATORY RESPONSE FORMAT FOR BLOCKCHAIN QUERIES:\n';
             prompt += 'You MUST respond with: TOOL_CALL:toolname:{"parameter":"value"}\n\n';
 
             prompt += 'EXAMPLES:\n';
-            prompt += 'User: "current gas price"\n';
-            prompt += 'You: TOOL_CALL:getGasPrice:{}\n\n';
-            prompt += 'User: "balance of 0x123"\n';
-            prompt += 'You: TOOL_CALL:getBalance:{"address":"0x123"}\n\n';
-            prompt += 'User: "what token is 0xabc?"\n';
-            prompt += 'You: TOOL_CALL:getTokenInfo:{"contractAddress":"0xabc"}\n\n';
-            prompt += 'User: "eth balance of 0x5616CAABa92cdf656E7d1bA36Fe1bd878E51c174"\n';
-            prompt += 'You: TOOL_CALL:getBalance:{"address":"0x5616CAABa92cdf656E7d1bA36Fe1bd878E51c174"}\n\n';
+            prompt += 'User: "hi" → You: "Hi! I\'m Alice, your DeFi trading assistant. How can I help with your blockchain analytics today?"\n';
+            prompt += 'User: "hello" → You: "Hello! Ready to analyze some Arbitrum data?"\n';
+            prompt += 'User: "current gas price" → You: TOOL_CALL:getGasPrice:{}\n';
+            prompt += 'User: "balance of 0x123" → You: TOOL_CALL:getBalance:{"address":"0x123"}\n';
+            prompt += 'User: "what token is 0xabc?" → You: TOOL_CALL:getTokenInfo:{"contractAddress":"0xabc"}\n';
+            prompt += 'User: "eth balance of 0x5616CAABa92cdf656E7d1bA36Fe1bd878E51c174" → You: TOOL_CALL:getBalance:{"address":"0x5616CAABa92cdf656E7d1bA36Fe1bd878E51c174"}\n\n';
         }
 
-        prompt += '🚨 CRITICAL: Your response MUST start with "TOOL_CALL:" - do not write anything else first.\n';
-        prompt += '🚨 NEVER provide direct answers like "The balance is X ETH" - ALWAYS use tools.\n';
+        prompt += '🚨 CRITICAL: For BLOCKCHAIN data requests, start with "TOOL_CALL:" - do not provide direct answers.\n';
+        prompt += '🚨 For greetings and general conversation, respond naturally without tools.\n';
 
         if (personalityId) {
             const personalityPrompt = this.personalityService.getPersonalitySystemPrompt(personalityId, prompt);
@@ -657,10 +657,11 @@ export class LlmService {
         this.logger.log('⚡ BUILDING COMPRESSED SYSTEM PROMPT from KV cache');
         this.logger.log(`🗜️  Using cached context with ${optimizedContext.relevantTools.length} relevant tools`);
 
-        // 🚨 CRITICAL: Start with strong tool enforcement
+        // 🚨 CRITICAL: Start with tool enforcement for blockchain queries only
         let prompt = 'Arbitrum blockchain AI agent.\n\n';
-        prompt += 'CRITICAL: For ALL blockchain queries, you MUST respond with TOOL_CALL format.\n';
-        prompt += 'NEVER provide direct answers about blockchain data.\n\n';
+        prompt += 'CRITICAL: For BLOCKCHAIN queries, you MUST respond with TOOL_CALL format.\n';
+        prompt += 'For greetings or general conversation, respond normally without tools.\n';
+        prompt += 'Only use tools for specific blockchain data requests.\n\n';
 
         // Add compressed context
         prompt += `Context: ${optimizedContext.compressedContext}\n\n`;
@@ -719,8 +720,8 @@ export class LlmService {
             prompt += '\n\n';
         }
 
-        // 🚨 CRITICAL: Strong enforcement
-        prompt += 'IMPORTANT: Start your response with "TOOL_CALL:" - do not write anything else first.\n\n';
+        // 🚨 CRITICAL: Balanced enforcement - tools for blockchain, natural for greetings
+        prompt += 'IMPORTANT: For blockchain queries, start with "TOOL_CALL:" - for greetings, respond naturally.\n\n';
 
         // 🚨 CRITICAL: Add FULL personality context, not just traits
         if (personalityId) {

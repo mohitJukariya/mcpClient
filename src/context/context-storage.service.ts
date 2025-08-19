@@ -37,6 +37,28 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
     private embeddingsService: EmbeddingsService
   ) { }
 
+  /**
+   * Safely converts Neo4j Integer values to JavaScript numbers
+   * Handles both old and new Neo4j driver versions
+   */
+  private safeToNumber(value: any): number {
+    if (!value) return 0;
+
+    // Check if it's a Neo4j Integer with toNumber method
+    if (typeof value.toNumber === 'function') {
+      return value.toNumber();
+    }
+
+    // Check if it's already a number
+    if (typeof value === 'number') {
+      return value;
+    }
+
+    // Try to parse as string
+    const parsed = parseInt(value.toString());
+    return isNaN(parsed) ? 0 : parsed;
+  }
+
   async onModuleInit() {
     await this.initializeStorages();
   }
@@ -800,10 +822,10 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
 
       // Get stats before clearing
       const statsResult = await session.run('MATCH (n) RETURN count(n) as nodeCount');
-      const nodeCount = statsResult.records[0]?.get('nodeCount')?.toNumber() || 0;
+      const nodeCount = this.safeToNumber(statsResult.records[0]?.get('nodeCount'));
 
       const relResult = await session.run('MATCH ()-[r]->() RETURN count(r) as relCount');
-      const relCount = relResult.records[0]?.get('relCount')?.toNumber() || 0;
+      const relCount = this.safeToNumber(relResult.records[0]?.get('relCount'));
 
       // Clear all relationships first
       await session.run('MATCH ()-[r]->() DELETE r');
@@ -813,7 +835,7 @@ export class ContextStorageService implements OnModuleInit, OnModuleDestroy {
 
       // Verify database is empty
       const verifyResult = await session.run('MATCH (n) RETURN count(n) as remaining');
-      const remaining = verifyResult.records[0]?.get('remaining')?.toNumber() || 0;
+      const remaining = this.safeToNumber(verifyResult.records[0]?.get('remaining'));
 
       await session.close();
 
