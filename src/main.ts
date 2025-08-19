@@ -33,9 +33,9 @@ async function bootstrap() {
         // Global prefix for API routes
         app.setGlobalPrefix('api');
 
-        // Render requires binding to 0.0.0.0, not localhost
-        const port = process.env.PORT || 3000;
-        const host = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
+        // Render requires binding to 0.0.0.0 and specific port handling
+        const port = parseInt(process.env.PORT || '3000', 10);
+        const host = '0.0.0.0'; // Always bind to 0.0.0.0 for Render compatibility
 
         // Add graceful shutdown
         const gracefulShutdown = async (signal: string) => {
@@ -57,11 +57,15 @@ async function bootstrap() {
 
         logger.log(`🚀 Application is running on ${host}:${port}`);
         logger.log(`📚 Environment: ${process.env.NODE_ENV || 'development'}`);
-        logger.log(`� Health check: http://${host}:${port}/api/health`);
+        logger.log(`🌐 Health check: http://${host}:${port}/api/health`);
         logger.log(`🤖 Chat endpoint: http://${host}:${port}/api/chat`);
-
-        // Log that the server is ready for Render
         logger.log(`✅ Server ready - listening on port ${port}`);
+
+        // Log port binding for Render debugging
+        if (process.env.NODE_ENV === 'production') {
+            logger.log(`🔌 Render deployment: Bound to ${host}:${port}`);
+            logger.log(`📡 Health endpoint accessible at /api/health`);
+        }
 
     } catch (error) {
         logger.error('❌ Failed to start application:', error);
