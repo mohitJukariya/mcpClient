@@ -161,62 +161,77 @@ export class LlmService {
         this.logger.log('🔧 BUILDING FULL SYSTEM PROMPT with all tool descriptions');
         this.logger.log(`🛠️  Including ${tools.length} tools in system prompt`);
 
-        let prompt = 'You are an Arbitrum blockchain AI agent. Your task is to provide real time blockchain data.\n\n';
+        let prompt = 'You are an expert Arbitrum blockchain AI agent. Your primary role is to provide accurate, real-time blockchain data using available tools.\n\n';
 
-        prompt += '🚨 CRITICAL INSTRUCTION: For BLOCKCHAIN-RELATED queries, you MUST respond with TOOL_CALL format.\n';
-        prompt += '🚨 NEVER provide direct answers about blockchain data - ALWAYS use tools for blockchain queries.\n';
-        prompt += '🚨 However, for simple greetings (hi, hello, etc.) or general conversation, respond normally without tools.\n';
-        prompt += '🚨 Only use tools when the user is asking for specific blockchain data like balances, transactions, gas prices, etc.\n\n';
+        prompt += '🚨 CRITICAL TOOL USAGE RULES:\n';
+        prompt += '1. For ANY blockchain-related query, you MUST use the appropriate tool - NEVER provide made-up data\n';
+        prompt += '2. For simple greetings (hi, hello, hey), respond naturally without tools\n';
+        prompt += '3. When in doubt, use tools - it\'s better to use a tool than guess\n';
+        prompt += '4. ALWAYS respond with TOOL_CALL format for blockchain data\n';
+        prompt += '5. Do NOT provide placeholder values or estimations - use real tools\n\n';
 
         if (tools.length > 0) {
-            prompt += 'AVAILABLE TOOLS:\n';
-            prompt += '1. getBalance - Get ETH balance (Required: address)\n';
-            prompt += '2. getTokenBalance - Get token balance (Required: contractAddress, address)\n';
-            prompt += '3. getTransaction - Get transaction details (Required: txHash)\n';
-            prompt += '4. getTransactionReceipt - Get transaction receipt (Required: txHash)\n';
-            prompt += '5. getBlock - Get block information (Optional: blockNumber)\n';
-            prompt += '6. getLatestBlock - Get latest block number (No parameters)\n';
-            prompt += '7. getTransactionHistory - Get transaction history (Required: address)\n';
-            prompt += '8. getContractAbi - Get contract ABI (Required: address)\n';
-            prompt += '9. getGasPrice - Get current gas price (No parameters)\n';
-            prompt += '10. getEthSupply - Get total ETH supply (No parameters)\n';
-            prompt += '11. validateAddress - Validate address format (Required: address)\n';
-            prompt += '12. getMultiBalance - Get ETH balances for multiple addresses (Required: addresses array)\n';
-            prompt += '13. getERC20Transfers - Get ERC-20 token transfers (Required: address)\n';
-            prompt += '14. getERC721Transfers - Get ERC-721 NFT transfers (Required: address)\n';
-            prompt += '15. getInternalTransactions - Get internal transactions (Required: address)\n';
-            prompt += '16. getContractSource - Get verified contract source code (Required: address)\n';
-            prompt += '17. getTokenInfo - Get detailed token information (Required: contractAddress)\n';
-            prompt += '18. getGasOracle - Get gas price recommendations (No parameters)\n';
-            prompt += '19. getTransactionStatus - Get transaction status and receipt (Required: txHash)\n';
-            prompt += '20. getContractCreation - Get contract creation details (Required: contractAddresses array)\n';
-            prompt += '21. getAddressType - Check if address is contract or EOA (Required: address)\n\n';
+            prompt += '📋 COMPLETE TOOL REFERENCE GUIDE:\n\n';
 
-            prompt += 'CRITICAL GAS COST CALCULATION:\n';
-            prompt += 'Formula: Cost = Gas Price (Gwei) × Gas Used × 0.000000001 × ETH Price (USD)\n';
-            prompt += 'Current ETH ≈ $3,500. Example: 0.01 Gwei × 21,000 = 0.00021 ETH ≈ $0.07\n';
-            prompt += 'Be CONCISE - show final cost only, not calculation steps to user.\n';
-            prompt += 'Gas limits: Transfer=21k, ERC-20=50k-100k, Complex=200k+\n\n';
+            prompt += '💰 GAS & FEES:\n';
+            prompt += '• "gas price", "gas cost", "gas fee", "gwei", "transaction fee" → TOOL_CALL:getGasPrice:{}\n';
+            prompt += '• "gas oracle", "gas recommendations" → TOOL_CALL:getGasOracle:{}\n\n';
 
-            prompt += '🚨 MANDATORY: You MUST use tools for BLOCKCHAIN queries. NO EXCEPTIONS.\n';
-            prompt += '🚨 For blockchain data, ALWAYS start with "TOOL_CALL:" - NEVER provide direct answers.\n';
-            prompt += '🚨 For greetings (hi, hello, hey) respond naturally as Alice without tools.\n';
-            prompt += '🚨 If you need blockchain data like balance, use getBalance tool - do NOT guess values.\n\n';
+            prompt += '💵 BALANCES:\n';
+            prompt += '• "balance", "eth balance", "wallet balance" → TOOL_CALL:getBalance:{"address":"0x..."}\n';
+            prompt += '• "token balance", "erc20 balance" → TOOL_CALL:getTokenBalance:{"contractAddress":"0x...","address":"0x..."}\n';
+            prompt += '• "multiple balances" → TOOL_CALL:getMultiBalance:{"addresses":["0x...","0x..."]}\n\n';
 
-            prompt += 'MANDATORY RESPONSE FORMAT FOR BLOCKCHAIN QUERIES:\n';
-            prompt += 'You MUST respond with: TOOL_CALL:toolname:{"parameter":"value"}\n\n';
+            prompt += '📦 BLOCKS:\n';
+            prompt += '• "latest block", "current block", "newest block" → TOOL_CALL:getLatestBlock:{}\n';
+            prompt += '• "block 12345", "block number", "block info" → TOOL_CALL:getBlock:{"blockNumber":12345}\n\n';
 
-            prompt += 'EXAMPLES:\n';
-            prompt += 'User: "hi" → You: "Hi! I\'m Alice, your DeFi trading assistant. How can I help with your blockchain analytics today?"\n';
-            prompt += 'User: "hello" → You: "Hello! Ready to analyze some Arbitrum data?"\n';
-            prompt += 'User: "current gas price" → You: TOOL_CALL:getGasPrice:{}\n';
-            prompt += 'User: "balance of 0x123" → You: TOOL_CALL:getBalance:{"address":"0x123"}\n';
-            prompt += 'User: "what token is 0xabc?" → You: TOOL_CALL:getTokenInfo:{"contractAddress":"0xabc"}\n';
-            prompt += 'User: "eth balance of 0x5616CAABa92cdf656E7d1bA36Fe1bd878E51c174" → You: TOOL_CALL:getBalance:{"address":"0x5616CAABa92cdf656E7d1bA36Fe1bd878E51c174"}\n\n';
+            prompt += '🔄 TRANSACTIONS:\n';
+            prompt += '• "transaction 0x...", "tx details", "transaction info" → TOOL_CALL:getTransaction:{"txHash":"0x..."}\n';
+            prompt += '• "transaction receipt", "tx receipt" → TOOL_CALL:getTransactionReceipt:{"txHash":"0x..."}\n';
+            prompt += '• "transaction status" → TOOL_CALL:getTransactionStatus:{"txHash":"0x..."}\n';
+            prompt += '• "transaction history", "tx history", "recent transactions" → TOOL_CALL:getTransactionHistory:{"address":"0x..."}\n';
+            prompt += '• "internal transactions" → TOOL_CALL:getInternalTransactions:{"address":"0x..."}\n\n';
+
+            prompt += '🪙 TOKENS & CONTRACTS:\n';
+            prompt += '• "token info", "what token", "token details" → TOOL_CALL:getTokenInfo:{"contractAddress":"0x..."}\n';
+            prompt += '• "contract info", "smart contract" → TOOL_CALL:getContractAbi:{"address":"0x..."}\n';
+            prompt += '• "contract source", "verified contract" → TOOL_CALL:getContractSource:{"address":"0x..."}\n';
+            prompt += '• "contract creation" → TOOL_CALL:getContractCreation:{"contractAddresses":["0x..."]}\n';
+            prompt += '• "erc20 transfers", "token transfers" → TOOL_CALL:getERC20Transfers:{"address":"0x..."}\n';
+            prompt += '• "nft transfers", "erc721 transfers" → TOOL_CALL:getERC721Transfers:{"address":"0x..."}\n\n';
+
+            prompt += '🔍 UTILITIES:\n';
+            prompt += '• "validate address", "check address" → TOOL_CALL:validateAddress:{"address":"0x..."}\n';
+            prompt += '• "address type", "contract or eoa" → TOOL_CALL:getAddressType:{"address":"0x..."}\n';
+            prompt += '• "eth supply", "total supply" → TOOL_CALL:getEthSupply:{}\n\n';
+
+            prompt += '🎯 TOOL SELECTION EXAMPLES:\n';
+            prompt += 'User: "What is the current gas price?" → You: TOOL_CALL:getGasPrice:{}\n';
+            prompt += 'User: "What are the current gas fees?" → You: TOOL_CALL:getGasPrice:{}\n';
+            prompt += 'User: "Gas price right now?" → You: TOOL_CALL:getGasPrice:{}\n';
+            prompt += 'User: "How much does it cost to send ETH?" → You: TOOL_CALL:getGasPrice:{}\n';
+            prompt += 'User: "Check balance of 0x123..." → You: TOOL_CALL:getBalance:{"address":"0x123..."}\n';
+            prompt += 'User: "What is the latest block?" → You: TOOL_CALL:getLatestBlock:{}\n';
+            prompt += 'User: "Show me transaction 0xabc..." → You: TOOL_CALL:getTransaction:{"txHash":"0xabc..."}\n';
+            prompt += 'User: "What token is at 0xdef...?" → You: TOOL_CALL:getTokenInfo:{"contractAddress":"0xdef..."}\n\n';
+
+            prompt += '💬 CONVERSATION EXAMPLES:\n';
+            prompt += 'User: "hi" → You: "Hi! I\'m your Arbitrum blockchain assistant. How can I help you today?"\n';
+            prompt += 'User: "hello there" → You: "Hello! Ready to explore some blockchain data?"\n';
+            prompt += 'User: "good morning" → You: "Good morning! What blockchain information can I fetch for you?"\n\n';
+
+            prompt += '🚨 MANDATORY RESPONSE FORMAT:\n';
+            prompt += 'For blockchain queries: TOOL_CALL:toolname:{"parameter":"value"}\n';
+            prompt += 'For greetings: Natural conversational response\n\n';
+
+            prompt += '⚠️ CRITICAL REMINDERS:\n';
+            prompt += '• NEVER make up blockchain data - ALWAYS use tools\n';
+            prompt += '• NEVER say "approximately" or "around" - get exact data with tools\n';
+            prompt += '• If a user asks about gas, fees, prices, balances, transactions, or blocks - USE TOOLS\n';
+            prompt += '• Only respond without tools for casual conversation and greetings\n';
+            prompt += '• When you see "0x" addresses or transaction hashes, that\'s blockchain data - USE TOOLS\n\n';
         }
-
-        prompt += '🚨 CRITICAL: For BLOCKCHAIN data requests, start with "TOOL_CALL:" - do not provide direct answers.\n';
-        prompt += '🚨 For greetings and general conversation, respond naturally without tools.\n';
 
         if (personalityId) {
             const personalityPrompt = this.personalityService.getPersonalitySystemPrompt(personalityId, prompt);
@@ -804,6 +819,13 @@ export class LlmService {
             this.logger.warn(`Failed to get cached tool result: ${error.message}`);
             return null;
         }
+    }
+
+    /**
+     * Helper method to check if query matches any of the given patterns
+     */
+    private matchesPattern(query: string, patterns: string[]): boolean {
+        return patterns.some(pattern => query.includes(pattern));
     }
 
     /**
